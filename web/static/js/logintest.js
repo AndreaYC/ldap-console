@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, claim } from './dom.js';
 import { loginSummary } from './format.js';
 
 // Field sets per application: [key, label, hint, AD default, non-AD default].
@@ -93,21 +93,25 @@ export function renderLoginTest(el, info) {
       return h('label', { class: 'field' }, h('span', null, label), inputs[key], hint ? h('span', { class: 'muted hint' }, hint) : null);
     }));
   };
-  appSelect.addEventListener('change', () => { app = appSelect.value; drawFields(); out.replaceChildren(placeholder()); });
+  appSelect.addEventListener('change', () => { app = appSelect.value; drawFields(); claim(out); out.replaceChildren(placeholder()); });
 
   const submit = async (ev) => {
     ev.preventDefault();
     const values = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value.trim()]));
     save(app, values);
+    // A slow earlier test must not overwrite a newer one or a switched app.
+    const current = claim(out);
+    const label = apps[app].label;
     out.replaceChildren(loading('Testing…'));
     try {
       const res = await api.checkLogin({ app, username: username.value.trim(), password: password.value, ...values });
-      const sum = loginSummary(res.steps, apps[app].label);
+      if (!current()) return;
+      const sum = loginSummary(res.steps, label);
       out.replaceChildren(
         h('div', { class: 'summary ' + sum.status }, h('span', { class: 'mark' }, statusMark[sum.status]), sum.text),
         h('div', { class: 'steps' }, res.steps.map(renderStep)));
     } catch (err) {
-      out.replaceChildren(errorBox(err));
+      if (current()) out.replaceChildren(errorBox(err));
     }
   };
 
