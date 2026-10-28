@@ -35,7 +35,7 @@ func (c *Client) Search(ctx context.Context, q Query) (Result, error) {
 		q.Limit = DefaultLimit
 	}
 	var res Result
-	err := c.do(func(conn *ldap.Conn) error {
+	err := c.do(ctx, func(conn *ldap.Conn) error {
 		var err error
 		res, err = c.searchPaged(ctx, conn, q)
 		return err

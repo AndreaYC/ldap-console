@@ -20,7 +20,7 @@ func newService(t *testing.T, cfg ldaptest.Config, base string, isAD bool) *Serv
 func newServiceWithServer(t *testing.T, cfg ldaptest.Config, base string, isAD bool) (*Service, *ldaptest.Server) {
 	t.Helper()
 	srv := ldaptest.Start(t, cfg)
-	c, err := ldapclient.New(ldapclient.Config{URL: srv.URL, BindDN: cfg.BindDN, Password: cfg.Password})
+	c, err := ldapclient.New(context.Background(), ldapclient.Config{URL: srv.URL, BindDN: cfg.BindDN, Password: cfg.Password})
 	if err != nil {
 		t.Fatal(err)
 	}

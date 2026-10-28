@@ -13,7 +13,7 @@ import (
 func newTestClient(t *testing.T, cfg ldaptest.Config) (*Client, *ldaptest.Server) {
 	t.Helper()
 	srv := ldaptest.Start(t, cfg)
-	c, err := New(Config{URL: srv.URL, BindDN: cfg.BindDN, Password: cfg.Password, PageSize: 100})
+	c, err := New(context.Background(), Config{URL: srv.URL, BindDN: cfg.BindDN, Password: cfg.Password, PageSize: 100})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -23,14 +23,14 @@ func newTestClient(t *testing.T, cfg ldaptest.Config) (*Client, *ldaptest.Server
 
 func TestNewRejectsWrongPassword(t *testing.T) {
 	srv := ldaptest.Start(t, ldaptest.CorpAD())
-	_, err := New(Config{URL: srv.URL, BindDN: ldaptest.BindDN, Password: "wrong"})
+	_, err := New(context.Background(), Config{URL: srv.URL, BindDN: ldaptest.BindDN, Password: "wrong"})
 	if !ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 		t.Fatalf("err = %v, want invalid credentials", err)
 	}
 }
 
 func TestNewRejectsUnreachableServer(t *testing.T) {
-	if _, err := New(Config{URL: "ldap://127.0.0.1:1"}); err == nil {
+	if _, err := New(context.Background(), Config{URL: "ldap://127.0.0.1:1"}); err == nil {
 		t.Fatal("dial to closed port succeeded")
 	}
 }

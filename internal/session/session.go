@@ -27,7 +27,7 @@ func Open(ctx context.Context, s Settings, password string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := ldapclient.New(ldapclient.Config{
+	client, err := ldapclient.New(ctx, ldapclient.Config{
 		URL: s.URL, BindDN: s.BindDN, Password: password,
 		StartTLS: s.StartTLS, TLS: tlsCfg, Timeout: s.Timeout, PageSize: s.PageSize,
 	})
