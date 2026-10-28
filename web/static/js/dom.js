@@ -1,7 +1,5 @@
 import { toCSV } from './csv.js';
-import { splitDN } from './format.js';
-
-export { splitDN };
+export { splitDN, rdnValue } from './format.js';
 
 // Tiny DOM helpers. All text goes through textContent / text nodes, never
 // innerHTML: directory values are untrusted.
@@ -49,13 +47,6 @@ export function loading(text = 'Loading…') {
 // entryLink navigates to an entry in the Browse view.
 export function entryLink(dn, text) {
   return h('a', { href: '#/browse?dn=' + encodeURIComponent(dn), title: dn }, text ?? dn);
-}
-
-// rdnValue returns the value of the first RDN ("CN=Alice,OU=x" -> "Alice").
-export function rdnValue(dn) {
-  const first = splitDN(dn)[0] || dn;
-  const i = first.indexOf('=');
-  return (i < 0 ? first : first.slice(i + 1)).replace(/\\(.)/g, '$1');
 }
 
 export function copyButton(text) {

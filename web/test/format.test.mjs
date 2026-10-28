@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loginSummary, containerPath, hostOf, plural } from '../static/js/format.js';
+import { loginSummary, containerPath, hostOf, plural, rdnValue, splitDN, unescapeValue } from '../static/js/format.js';
 
 const step = (id, status, title = id) => ({ id, status, title });
 
@@ -53,4 +53,39 @@ test('summary keeps warnings visible when the password was not tested', () => {
   assert.equal(s.status, 'warn');
   assert.match(s.text, /password was not tested/);
   assert.match(s.text, /1 warning\b/);
+});
+
+test('rdnValue decodes AD-style character escapes', () => {
+  assert.equal(rdnValue('CN=Smith\\, John,OU=Users,DC=corp,DC=local'), 'Smith, John');
+  assert.equal(rdnValue('CN=a\\+b\\=c\\\\d,OU=x'), 'a+b=c\\d');
+});
+
+test('rdnValue decodes OpenLDAP-style hex escapes', () => {
+  assert.equal(rdnValue('cn=Smith\\2C John,ou=people,dc=example,dc=org'), 'Smith, John');
+  assert.equal(rdnValue('cn=\\23hash\\20,ou=x'), '#hash ');
+});
+
+test('consecutive hex escapes form one UTF-8 character', () => {
+  assert.equal(rdnValue('cn=J\\C3\\BCrgen,ou=x'), 'Jürgen');
+  assert.equal(rdnValue('cn=\\E7\\8E\\8B\\E5\\B0\\8F\\E6\\98\\8E,ou=x'), '王小明');
+});
+
+test('container path decodes hex escapes too', () => {
+  assert.equal(containerPath('cn=x,ou=R\\26D,ou=J\\C3\\BCrgen\\2C Team,dc=example,dc=org'), 'Jürgen, Team / R&D');
+});
+
+test('unescaped non-ASCII text passes through', () => {
+  assert.equal(rdnValue('CN=王小明,OU=台北'), '王小明');
+  assert.equal(unescapeValue('emoji 🙂 \\2C ok'), 'emoji 🙂 , ok');
+});
+
+test('malformed escapes do not throw', () => {
+  assert.equal(unescapeValue('trailing\\'), 'trailing\\');
+  assert.equal(unescapeValue('\\zz'), 'zz');
+  assert.equal(unescapeValue('\\FF'), '�');
+});
+
+test('splitDN keeps escaped commas inside an RDN', () => {
+  assert.deepEqual(splitDN('cn=Smith\\, John, ou=people,dc=example'), ['cn=Smith\\, John', 'ou=people', 'dc=example']);
+  assert.deepEqual(splitDN('cn=Smith\\2C John,dc=example'), ['cn=Smith\\2C John', 'dc=example']);
 });
