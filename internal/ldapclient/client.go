@@ -12,8 +12,13 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
-// ErrNotFound is returned when a requested DN does not exist.
-var ErrNotFound = errors.New("entry not found")
+var (
+	// ErrNotFound is returned when a requested DN does not exist.
+	ErrNotFound = errors.New("entry not found")
+	// ErrReferral is returned when the DN is held by another domain or
+	// partition and the server answered with a referral instead of the entry.
+	ErrReferral = errors.New("entry is in another domain (referral)")
+)
 
 // Config holds connection settings. An empty BindDN means anonymous bind.
 type Config struct {

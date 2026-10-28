@@ -27,10 +27,12 @@ type MembershipResult struct {
 	Truncated bool         `json:"truncated,omitempty"`
 }
 
-// Bounds on graph walks, so a pathological directory cannot hang a request.
-const (
+// Bounds on the LDAP work one request may cause, so a huge or pathological
+// directory cannot hang a request or flood the DC. Variables so tests can lower them.
+var (
 	maxDepth       = 32
-	maxMemberships = 20000
+	maxMemberships = 20000 // items in one result, and entries per sub-search
+	maxLookups     = 1000  // individual entry reads per resolve step
 )
 
 // GroupsOf returns every group dn belongs to: direct, nested (with the path
@@ -43,10 +45,11 @@ func (s *Service) GroupsOf(ctx context.Context, dn string) (MembershipResult, er
 	res := MembershipResult{Subject: toObject(e)}
 	seen := map[string]bool{dnKey(dn): true}
 
-	direct, err := s.parentGroups(ctx, e)
+	direct, truncated, err := s.parentGroups(ctx, e)
 	if err != nil {
 		return MembershipResult{}, err
 	}
+	res.Truncated = truncated
 	if primary, ok, err := s.primaryGroup(ctx, e); err != nil {
 		return MembershipResult{}, err
 	} else if ok {
@@ -77,10 +80,15 @@ func (s *Service) GroupsOf(ctx context.Context, dn string) (MembershipResult, er
 		if len(cur.m.Via) >= maxDepth {
 			continue
 		}
-		parents, err := s.parentGroups(ctx, cur.entry)
+		if len(res.Items)+len(queue) >= maxMemberships {
+			res.Truncated = true
+			continue // budget spent: finish emitting what is queued, expand nothing more
+		}
+		parents, truncated, err := s.parentGroups(ctx, cur.entry)
 		if err != nil {
 			return MembershipResult{}, err
 		}
+		res.Truncated = res.Truncated || truncated
 		for _, p := range parents {
 			if seen[dnKey(p.DN)] {
 				continue
@@ -101,7 +109,7 @@ type groupEntry struct {
 // parentGroups finds groups listing e as a member: by searching member,
 // uniqueMember and memberUid (works without a memberOf overlay), plus any
 // memberOf values the search missed (e.g. groups outside the search base).
-func (s *Service) parentGroups(ctx context.Context, e *ldap.Entry) ([]groupEntry, error) {
+func (s *Service) parentGroups(ctx context.Context, e *ldap.Entry) ([]groupEntry, bool, error) {
 	dn := ldap.EscapeFilter(e.DN)
 	clauses := "(member=" + dn + ")(uniqueMember=" + dn + ")"
 	if uid := e.GetAttributeValue("uid"); uid != "" {
@@ -112,25 +120,32 @@ func (s *Service) parentGroups(ctx context.Context, e *ldap.Entry) ([]groupEntry
 		Filter: "(&" + groupFilter + "(|" + clauses + "))", Attrs: objectAttrs, Limit: maxMemberships,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("groups containing %s: %w", e.DN, err)
+		return nil, false, fmt.Errorf("groups containing %s: %w", e.DN, err)
 	}
+	truncated := res.Truncated
 	found := map[string]bool{}
 	out := make([]groupEntry, 0, len(res.Entries))
 	for _, g := range res.Entries {
 		found[dnKey(g.DN)] = true
 		out = append(out, groupEntry{Entry: g})
 	}
+	lookups := 0
 	for _, m := range e.GetAttributeValues("memberOf") {
 		if found[dnKey(m)] {
 			continue
 		}
+		if lookups >= maxLookups {
+			truncated = true
+			break
+		}
+		lookups++
 		g, err := s.lookup(ctx, m)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, groupEntry{Entry: g})
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // primaryGroup resolves an AD account's primaryGroupID to its group entry.
@@ -165,15 +180,26 @@ func (s *Service) primaryGroup(ctx context.Context, e *ldap.Entry) (groupEntry, 
 	return groupEntry{Entry: res.Entries[0], primary: true}, true, nil
 }
 
-// lookup reads a referenced entry, standing in a placeholder when the
-// reference dangles (deleted object, or outside what the bind DN can read).
+// lookup reads a referenced entry. When the reference cannot be read here —
+// deleted, hidden from the bind DN, or held by another domain — it returns a
+// placeholder instead of failing the whole request.
 func (s *Service) lookup(ctx context.Context, dn string) (*ldap.Entry, error) {
 	e, err := s.dir.Entry(ctx, dn, objectAttrs...)
-	if err == nil {
+	switch {
+	case err == nil:
 		return e, nil
-	}
-	if errors.Is(err, ldapclient.ErrNotFound) {
-		return &ldap.Entry{DN: dn}, nil
+	case errors.Is(err, ldapclient.ErrNotFound):
+		return placeholder(dn, "not found (deleted, or not readable by the bind account)"), nil
+	case errors.Is(err, ldapclient.ErrReferral):
+		return placeholder(dn, "in another domain; not readable from this server"), nil
 	}
 	return nil, err
+}
+
+// placeholder is an entry with only a description, which toObject renders
+// as KindUnknown.
+func placeholder(dn, why string) *ldap.Entry {
+	return &ldap.Entry{DN: dn, Attributes: []*ldap.EntryAttribute{
+		{Name: "description", Values: []string{why}, ByteValues: [][]byte{[]byte(why)}},
+	}}
 }

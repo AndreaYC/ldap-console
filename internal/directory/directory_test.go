@@ -2,6 +2,7 @@ package directory
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -12,13 +13,19 @@ import (
 
 func newService(t *testing.T, cfg ldaptest.Config, base string, isAD bool) *Service {
 	t.Helper()
+	s, _ := newServiceWithServer(t, cfg, base, isAD)
+	return s
+}
+
+func newServiceWithServer(t *testing.T, cfg ldaptest.Config, base string, isAD bool) (*Service, *ldaptest.Server) {
+	t.Helper()
 	srv := ldaptest.Start(t, cfg)
 	c, err := ldapclient.New(ldapclient.Config{URL: srv.URL, BindDN: cfg.BindDN, Password: cfg.Password})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(c, base, isAD)
+	return New(c, base, isAD), srv
 }
 
 func corp(t *testing.T) *Service {
@@ -262,5 +269,96 @@ func TestGroupsDecodesADGroupType(t *testing.T) {
 	}
 	if len(res.Items) != 7 || res.Items[0].GroupType != "Security · Global" {
 		t.Errorf("groups = %+v", res.Items)
+	}
+}
+
+// setLimit lowers a package limit for one test.
+func setLimit(t *testing.T, p *int, v int) {
+	old := *p
+	*p = v
+	t.Cleanup(func() { *p = old })
+}
+
+func TestMembersOfBoundsPerDNLookupsOnHugeGroups(t *testing.T) {
+	setLimit(t, &maxLookups, 5)
+	cfg := ldaptest.CorpAD()
+	for _, e := range cfg.Entries {
+		if e.DN == ldaptest.OpsDN {
+			for i := range 40 {
+				e.Attrs["member"] = append(e.Attrs["member"], fmt.Sprintf("CN=gone%d,OU=Users,%s", i, ldaptest.BaseDN))
+			}
+		}
+	}
+	s, srv := newServiceWithServer(t, cfg, ldaptest.BaseDN, true)
+	before := srv.Searches.Load()
+
+	res, err := s.MembersOf(context.Background(), ldaptest.OpsDN, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Truncated {
+		t.Error("result not marked truncated after hitting the lookup cap")
+	}
+	if n := srv.Searches.Load() - before; n > 10 {
+		t.Errorf("issued %d searches for one group, want <= 10", n)
+	}
+}
+
+func TestMembersOfCapsDirectMemberCount(t *testing.T) {
+	setLimit(t, &maxMemberships, 1)
+	res, err := corp(t).MembersOf(context.Background(), ldaptest.EngineeringDN, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) > 1 || !res.Truncated {
+		t.Errorf("items = %d truncated = %v, want <= 1 and truncated", len(res.Items), res.Truncated)
+	}
+}
+
+func TestMembersOfNestedStopsExpandingAtBudget(t *testing.T) {
+	setLimit(t, &maxMemberships, 3)
+	s, srv := newServiceWithServer(t, ldaptest.CorpAD(), ldaptest.BaseDN, true)
+	before := srv.Searches.Load()
+	res, err := s.MembersOf(context.Background(), ldaptest.AllStaffDN, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) > 3 || !res.Truncated {
+		t.Errorf("items = %d truncated = %v, want <= 3 and truncated", len(res.Items), res.Truncated)
+	}
+	if n := srv.Searches.Load() - before; n > 8 {
+		t.Errorf("issued %d searches after budget exhausted, want <= 8", n)
+	}
+}
+
+func TestGroupsOfPropagatesTruncatedSubSearch(t *testing.T) {
+	setLimit(t, &maxMemberships, 1)
+	res, err := corp(t).GroupsOf(context.Background(), ldaptest.AliceDN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Truncated {
+		t.Error("Alice is in several groups; a limit of 1 must mark the result truncated")
+	}
+}
+
+func TestMembersToleratesMembersInOtherDomains(t *testing.T) {
+	cfg := ldaptest.CorpAD()
+	cfg.ReferralSuffixes = []string{"DC=other,DC=local"}
+	foreign := "CN=Zed,OU=Users,DC=other,DC=local"
+	for _, e := range cfg.Entries {
+		if e.DN == ldaptest.OpsDN {
+			e.Attrs["member"] = append(e.Attrs["member"], foreign)
+		}
+	}
+	res, err := newService(t, cfg, ldaptest.BaseDN, true).MembersOf(context.Background(), ldaptest.OpsDN, false)
+	if err != nil {
+		t.Fatalf("one cross-domain member failed the whole request: %v", err)
+	}
+	assertItems(t, res.Items, "Bob[direct]", "Zed[direct]")
+	for _, m := range res.Items {
+		if m.DN == foreign && (m.Kind != KindUnknown || !strings.Contains(m.Description, "another domain")) {
+			t.Errorf("foreign member = %+v", m.Object)
+		}
 	}
 }

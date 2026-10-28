@@ -65,8 +65,10 @@ var objectAttrs = []string{
 const groupFilter = "(|(objectClass=group)(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)(objectClass=posixGroup))"
 
 func toObject(e *ldap.Entry) Object {
-	if len(e.Attributes) == 0 {
-		return unknownObject(e.DN)
+	if len(e.GetAttributeValues("objectClass")) == 0 {
+		o := unknownObject(e.DN)
+		o.Description = e.GetAttributeValue("description")
+		return o
 	}
 	o := Object{
 		DN:          e.DN,

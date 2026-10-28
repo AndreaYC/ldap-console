@@ -49,7 +49,8 @@ function membershipTable(res, { title, csvName, showGroupType }) {
       (!q || m.name.toLowerCase().includes(q) || m.dn.toLowerCase().includes(q)));
     for (const m of rows) {
       tbody.append(h('tr', null,
-        h('td', null, h('span', { class: 'namecell' }, kindBadge(m.kind), entryLink(m.dn, m.name))),
+        h('td', null, h('span', { class: 'namecell' }, kindBadge(m.kind), entryLink(m.dn, m.name)),
+          m.kind === 'unknown' && m.description ? h('div', { class: 'notice' }, m.description) : null),
         showGroupType ? h('td', { class: 'muted' }, m.groupType || '') : null,
         h('td', null, tags(m)),
         h('td', null, viaCell(m.via))));

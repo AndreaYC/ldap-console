@@ -118,6 +118,9 @@ func (c *Client) Entry(ctx context.Context, dn string, attrs ...string) (*ldap.E
 	if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
 		return nil, fmt.Errorf("%s: %w", dn, ErrNotFound)
 	}
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultReferral) {
+		return nil, fmt.Errorf("%s: %w", dn, ErrReferral)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -131,44 +134,82 @@ func (c *Client) Entry(ctx context.Context, dn string, attrs ...string) (*ldap.E
 	return e, nil
 }
 
+// maxAttributeValues caps how many values of one ranged attribute Entry
+// collects, so opening a group with hundreds of thousands of members cannot
+// tie up the server or this process.
+var maxAttributeValues = 50000
+
+// TruncatedAttribute is a pseudo-attribute Entry adds, listing the names of
+// attributes whose values were cut at maxAttributeValues.
+const TruncatedAttribute = "ldap-console-truncated"
+
+// IsTruncated reports whether Entry cut attribute name short.
+func IsTruncated(e *ldap.Entry, name string) bool {
+	for _, n := range e.GetAttributeValues(TruncatedAttribute) {
+		if strings.EqualFold(n, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) resolveRanges(ctx context.Context, e *ldap.Entry) error {
 	out := e.Attributes[:0:0]
+	var truncated []string
 	for _, a := range e.Attributes {
 		name, spec, ranged := strings.Cut(a.Name, ";range=")
 		if !ranged {
 			out = append(out, a)
 			continue
 		}
-		full, err := c.fetchRemainingRange(ctx, e.DN, name, spec, a)
+		full, complete, err := c.fetchRemainingRange(ctx, e.DN, name, spec, a)
 		if err != nil {
 			return err
 		}
 		out = append(out, full)
+		if !complete {
+			truncated = append(truncated, name)
+		}
+	}
+	if len(truncated) > 0 {
+		out = append(out, &ldap.EntryAttribute{Name: TruncatedAttribute, Values: truncated, ByteValues: toBytes(truncated)})
 	}
 	e.Attributes = out
 	return nil
 }
 
+func toBytes(vals []string) [][]byte {
+	out := make([][]byte, len(vals))
+	for i, v := range vals {
+		out[i] = []byte(v)
+	}
+	return out
+}
+
 // fetchRemainingRange keeps requesting name;range=<next>-* until the server
-// answers with a range ending in "*".
-func (c *Client) fetchRemainingRange(ctx context.Context, dn, name, spec string, first *ldap.EntryAttribute) (*ldap.EntryAttribute, error) {
-	full := &ldap.EntryAttribute{Name: name}
+// answers with a range ending in "*", or maxAttributeValues is reached
+// (complete = false).
+func (c *Client) fetchRemainingRange(ctx context.Context, dn, name, spec string, first *ldap.EntryAttribute) (full *ldap.EntryAttribute, complete bool, err error) {
+	full = &ldap.EntryAttribute{Name: name}
 	cur := first
 	for {
 		full.Values = append(full.Values, cur.Values...)
 		full.ByteValues = append(full.ByteValues, cur.ByteValues...)
 		_, end, _ := strings.Cut(spec, "-")
 		if end == "*" {
-			return full, nil
+			return full, true, nil
+		}
+		if len(full.Values) >= maxAttributeValues {
+			return full, false, nil
 		}
 		hi, err := strconv.Atoi(end)
 		if err != nil {
-			return nil, fmt.Errorf("%s: bad range %q on %s", dn, spec, name)
+			return nil, false, fmt.Errorf("%s: bad range %q on %s", dn, spec, name)
 		}
 		want := fmt.Sprintf("%s;range=%d-*", name, hi+1)
 		res, err := c.Search(ctx, Query{Base: dn, Scope: ldap.ScopeBaseObject, Filter: "(objectClass=*)", Attrs: []string{want}, Limit: 1})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		cur, spec = nil, ""
 		if len(res.Entries) == 1 {
@@ -179,7 +220,7 @@ func (c *Client) fetchRemainingRange(ctx context.Context, dn, name, spec string,
 			}
 		}
 		if cur == nil {
-			return nil, fmt.Errorf("%s: server stopped returning %s after range %d", dn, name, hi)
+			return nil, false, fmt.Errorf("%s: server stopped returning %s after range %d", dn, name, hi)
 		}
 	}
 }

@@ -1,3 +1,5 @@
+import { toCSV } from './csv.js';
+
 // Tiny DOM helpers. All text goes through textContent / text nodes, never
 // innerHTML: directory values are untrusted.
 
@@ -82,11 +84,7 @@ export function copyButton(text) {
 }
 
 export function downloadCSV(filename, header, rows) {
-  const esc = (v) => {
-    const s = String(v ?? '');
-    return /[",\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s;
-  };
-  const text = [header, ...rows].map((r) => r.map(esc).join(',')).join('\n');
+  const text = toCSV(header, rows);
   const url = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' }));
   const a = h('a', { href: url, download: filename });
   document.body.append(a);

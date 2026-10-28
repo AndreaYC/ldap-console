@@ -21,97 +21,111 @@ const memberUIDChunk = 50
 // MembersOf lists the members of group dn. With nested, members of member
 // groups are included too, each with the chain of groups that brings it in.
 func (s *Service) MembersOf(ctx context.Context, dn string, nested bool) (MembershipResult, error) {
-	e, err := s.dir.Entry(ctx, dn, slices.Concat(objectAttrs, []string{"member", "uniqueMember", "memberUid", "objectSid"})...)
+	e, err := s.dir.Entry(ctx, dn, groupAttrs()...)
 	if err != nil {
 		return MembershipResult{}, err
 	}
 	res := MembershipResult{Subject: toObject(e)}
 	seen := map[string]bool{dnKey(dn): true}
 
-	type item struct {
-		m     Membership
-		group *ldap.Entry
-	}
-	var queue []item
+	var queue []Membership
 	enqueue := func(members []Membership, via []string) {
 		for _, m := range members {
 			if seen[dnKey(m.DN)] {
 				continue
 			}
+			if len(res.Items)+len(queue) >= maxMemberships {
+				res.Truncated = true
+				return
+			}
 			seen[dnKey(m.DN)] = true
 			m.Via, m.Direct = via, len(via) == 0
-			queue = append(queue, item{m: m})
+			queue = append(queue, m)
 		}
 	}
 
-	direct, err := s.directMembers(ctx, e)
+	direct, truncated, err := s.directMembers(ctx, e)
 	if err != nil {
 		return MembershipResult{}, err
 	}
+	res.Truncated = truncated
 	enqueue(direct, nil)
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		res.Items = append(res.Items, cur.m)
-		if len(res.Items) >= maxMemberships {
-			res.Truncated = true
-			break
-		}
-		if !nested || cur.m.Kind != KindGroup || len(cur.m.Via) >= maxDepth {
+		res.Items = append(res.Items, cur)
+		if !nested || cur.Kind != KindGroup || len(cur.Via) >= maxDepth {
 			continue
 		}
-		g, err := s.dir.Entry(ctx, cur.m.DN, slices.Concat(objectAttrs, []string{"member", "uniqueMember", "memberUid", "objectSid"})...)
+		if len(res.Items)+len(queue) >= maxMemberships {
+			res.Truncated = true
+			continue // budget spent: finish emitting what is queued, expand nothing more
+		}
+		g, err := s.dir.Entry(ctx, cur.DN, groupAttrs()...)
 		if err != nil {
 			return MembershipResult{}, err
 		}
-		sub, err := s.directMembers(ctx, g)
+		sub, truncated, err := s.directMembers(ctx, g)
 		if err != nil {
 			return MembershipResult{}, err
 		}
-		enqueue(sub, append(slices.Clone(cur.m.Via), cur.m.DN))
+		res.Truncated = res.Truncated || truncated
+		enqueue(sub, append(slices.Clone(cur.Via), cur.DN))
 	}
 	return res, nil
 }
 
+func groupAttrs() []string {
+	return slices.Concat(objectAttrs, []string{"member", "uniqueMember", "memberUid", "objectSid"})
+}
+
 // directMembers resolves a group's member, uniqueMember and memberUid
-// values, plus AD primary-group members, to Objects.
-func (s *Service) directMembers(ctx context.Context, g *ldap.Entry) ([]Membership, error) {
+// values, plus AD primary-group members, to Objects. truncated reports that
+// a limit cut any part of it short.
+func (s *Service) directMembers(ctx context.Context, g *ldap.Entry) (out []Membership, truncated bool, err error) {
 	dns := slices.Clone(g.GetAttributeValues("member"))
 	for _, um := range g.GetAttributeValues("uniqueMember") {
 		dn, _, _ := strings.Cut(um, "#'") // strip optional UID: dn#'0101'B
 		dns = append(dns, dn)
 	}
-	objs, err := s.resolveDNs(ctx, g.DN, dns)
-	if err != nil {
-		return nil, err
+	truncated = ldapclient.IsTruncated(g, "member")
+	if len(dns) > maxMemberships {
+		dns, truncated = dns[:maxMemberships], true
 	}
-	out := make([]Membership, 0, len(objs))
+	objs, t, err := s.resolveDNs(ctx, g.DN, dns)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated = truncated || t
 	for _, o := range objs {
 		out = append(out, Membership{Object: o})
 	}
 
-	byUID, err := s.resolveUIDs(ctx, g.GetAttributeValues("memberUid"))
+	byUID, t, err := s.resolveUIDs(ctx, g.GetAttributeValues("memberUid"))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	truncated = truncated || t
 	for _, o := range byUID {
 		out = append(out, Membership{Object: o})
 	}
 
-	primary, err := s.primaryMembers(ctx, g)
+	primary, t, err := s.primaryMembers(ctx, g)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	truncated = truncated || t
 	for _, o := range primary {
 		out = append(out, Membership{Object: o, Primary: true})
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // resolveDNs returns an Object per DN, in input order. On AD one
 // (memberOf=group) search covers nearly all of them; the rest, and every DN
-// on other servers, are read individually.
-func (s *Service) resolveDNs(ctx context.Context, groupDN string, dns []string) ([]Object, error) {
+// on other servers, are read individually — at most maxLookups of them.
+// DNs beyond that are returned unresolved and truncated is set.
+func (s *Service) resolveDNs(ctx context.Context, groupDN string, dns []string) (out []Object, truncated bool, err error) {
 	known := map[string]Object{}
 	if s.isAD && len(dns) > 0 {
 		res, err := s.dir.Search(ctx, ldapclient.Query{
@@ -119,7 +133,7 @@ func (s *Service) resolveDNs(ctx context.Context, groupDN string, dns []string) 
 			Filter: "(memberOf=" + ldap.EscapeFilter(groupDN) + ")", Attrs: objectAttrs, Limit: maxMemberships,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("members of %s: %w", groupDN, err)
+			return nil, false, fmt.Errorf("members of %s: %w", groupDN, err)
 		}
 		for _, e := range res.Entries {
 			known[dnKey(e.DN)] = toObject(e)
@@ -131,18 +145,26 @@ func (s *Service) resolveDNs(ctx context.Context, groupDN string, dns []string) 
 			missing = append(missing, dn)
 		}
 	}
+	if len(missing) > maxLookups {
+		for _, dn := range missing[maxLookups:] {
+			o := unknownObject(dn)
+			o.Description = "not resolved: too many members to look up individually"
+			known[dnKey(dn)] = o
+		}
+		missing, truncated = missing[:maxLookups], true
+	}
 	looked, err := s.lookupMany(ctx, missing)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for i, dn := range missing {
 		known[dnKey(dn)] = looked[i]
 	}
-	out := make([]Object, len(dns))
+	out = make([]Object, len(dns))
 	for i, dn := range dns {
 		out[i] = known[dnKey(dn)]
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 func (s *Service) lookupMany(ctx context.Context, dns []string) ([]Object, error) {
@@ -173,8 +195,10 @@ func (s *Service) lookupMany(ctx context.Context, dns []string) ([]Object, error
 }
 
 // resolveUIDs maps posixGroup memberUid values to accounts.
-func (s *Service) resolveUIDs(ctx context.Context, uids []string) ([]Object, error) {
-	var out []Object
+func (s *Service) resolveUIDs(ctx context.Context, uids []string) (out []Object, truncated bool, err error) {
+	if len(uids) > maxMemberships {
+		uids, truncated = uids[:maxMemberships], true
+	}
 	for chunk := range slices.Chunk(uids, memberUIDChunk) {
 		var f strings.Builder
 		f.WriteString("(&(uid=*)(|")
@@ -184,36 +208,37 @@ func (s *Service) resolveUIDs(ctx context.Context, uids []string) ([]Object, err
 		f.WriteString("))")
 		res, err := s.dir.Search(ctx, ldapclient.Query{Base: s.base, Scope: ldap.ScopeWholeSubtree, Filter: f.String(), Attrs: objectAttrs})
 		if err != nil {
-			return nil, fmt.Errorf("resolve memberUid: %w", err)
+			return nil, false, fmt.Errorf("resolve memberUid: %w", err)
 		}
+		truncated = truncated || res.Truncated
 		for _, e := range res.Entries {
 			out = append(out, toObject(e))
 		}
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // primaryMembers finds AD accounts whose primaryGroupID is this group's RID.
 // AD never lists these in the group's member attribute.
-func (s *Service) primaryMembers(ctx context.Context, g *ldap.Entry) ([]Object, error) {
+func (s *Service) primaryMembers(ctx context.Context, g *ldap.Entry) ([]Object, bool, error) {
 	raw := g.GetRawAttributeValue("objectSid")
 	if !s.isAD || len(raw) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 	sid, err := attr.ParseSID(raw)
 	if err != nil {
-		return nil, fmt.Errorf("objectSid of %s: %w", g.DN, err)
+		return nil, false, fmt.Errorf("objectSid of %s: %w", g.DN, err)
 	}
 	res, err := s.dir.Search(ctx, ldapclient.Query{
 		Base: s.base, Scope: ldap.ScopeWholeSubtree,
 		Filter: "(primaryGroupID=" + ldap.EscapeFilter(attr.RID(sid)) + ")", Attrs: objectAttrs, Limit: maxMemberships,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("primary-group members of %s: %w", g.DN, err)
+		return nil, false, fmt.Errorf("primary-group members of %s: %w", g.DN, err)
 	}
 	out := make([]Object, 0, len(res.Entries))
 	for _, e := range res.Entries {
 		out = append(out, toObject(e))
 	}
-	return out, nil
+	return out, res.Truncated, nil
 }

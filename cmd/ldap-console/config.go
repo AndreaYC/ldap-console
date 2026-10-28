@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -20,6 +19,7 @@ type config struct {
 	StartTLS           bool
 	CAFile             string
 	InsecureSkipVerify bool
+	AllowCleartext     bool
 	Listen             string
 	PageSize           uint
 	Timeout            time.Duration
@@ -37,6 +37,7 @@ func parseFlags(args []string, getenv func(string) string) (config, error) {
 	fs.BoolVar(&c.StartTLS, "start-tls", false, "upgrade ldap:// with StartTLS")
 	fs.StringVar(&c.CAFile, "ca-file", getenv("LDAP_CA_FILE"), "PEM CA bundle to trust for the server certificate (env LDAP_CA_FILE)")
 	fs.BoolVar(&c.InsecureSkipVerify, "insecure-skip-verify", false, "do not verify the server certificate (testing only)")
+	fs.BoolVar(&c.AllowCleartext, "allow-cleartext", false, "permit a password bind over unencrypted ldap:// (testing only)")
 	fs.StringVar(&c.Listen, "listen", "127.0.0.1:8389", "UI listen address; must be loopback")
 	fs.UintVar(&c.PageSize, "page-size", 500, "LDAP paged-results page size")
 	fs.DurationVar(&c.Timeout, "timeout", 30*time.Second, "LDAP operation timeout")
@@ -63,10 +64,36 @@ func (c config) validate() error {
 	if c.StartTLS && u.Scheme == "ldaps" {
 		return errors.New("-start-tls only applies to ldap:// URLs")
 	}
+	if c.sendsCleartextPassword(u) && !c.AllowCleartext {
+		return errors.New("refusing to send the bind password in cleartext over ldap://; " +
+			"use ldaps://, add -start-tls, or pass -allow-cleartext for a lab server")
+	}
 	if c.PageSize == 0 || c.PageSize > 10000 {
 		return errors.New("-page-size must be 1..10000")
 	}
 	return checkLoopback(c.Listen)
+}
+
+// sendsCleartextPassword reports a password bind over an unencrypted
+// connection to a non-loopback host.
+func (c config) sendsCleartextPassword(u *url.URL) bool {
+	if u.Scheme != "ldap" || c.StartTLS || c.BindDN == "" {
+		return false
+	}
+	ip := net.ParseIP(u.Hostname())
+	return u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback())
+}
+
+// warnings lists risky settings the operator opted into.
+func (c config) warnings() []string {
+	var w []string
+	if c.InsecureSkipVerify {
+		w = append(w, "-insecure-skip-verify: the server certificate is NOT verified; anyone on the network path can impersonate the DC")
+	}
+	if c.AllowCleartext {
+		w = append(w, "-allow-cleartext: the bind password may travel unencrypted")
+	}
+	return w
 }
 
 // checkLoopback refuses non-loopback listen addresses: the UI has no login
@@ -91,7 +118,7 @@ func (c config) tlsConfig() (*tls.Config, error) {
 		return nil, err
 	}
 	cfg := &tls.Config{
-		ServerName:         strings.Split(u.Host, ":")[0],
+		ServerName:         u.Hostname(),
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: c.InsecureSkipVerify, // #nosec G402 -- explicit opt-in flag for lab servers
 	}

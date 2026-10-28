@@ -32,6 +32,7 @@ func TestParseFlagsRejectsInvalidSettings(t *testing.T) {
 		{"zero page size", []string{"-url", "ldap://dc01", "-page-size", "0"}, "page-size"},
 		{"public listen", []string{"-url", "ldap://dc01", "-listen", "0.0.0.0:8389"}, "not a loopback"},
 		{"lan listen", []string{"-url", "ldap://dc01", "-listen", "10.0.0.5:8389"}, "not a loopback"},
+		{"cleartext bind", []string{"-url", "ldap://dc01:389", "-bind-dn", "svc@corp.local"}, "cleartext"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -70,5 +71,38 @@ func TestTLSConfigRejectsCAFileWithoutCertificates(t *testing.T) {
 	_, err := config{URL: "ldaps://dc01:636", CAFile: path}.tlsConfig()
 	if err == nil || !strings.Contains(err.Error(), "no PEM certificates") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestParseFlagsAllowsCleartextOnlyWhenSafeOrExplicit(t *testing.T) {
+	for _, args := range [][]string{
+		{"-url", "ldap://dc01:389", "-bind-dn", "svc@corp.local", "-start-tls"},
+		{"-url", "ldaps://dc01:636", "-bind-dn", "svc@corp.local"},
+		{"-url", "ldap://127.0.0.1:3389", "-bind-dn", "CN=svc"},
+		{"-url", "ldap://dc01:389"}, // anonymous: no password to leak
+		{"-url", "ldap://dc01:389", "-bind-dn", "svc@corp.local", "-allow-cleartext"},
+	} {
+		if _, err := parseFlags(args, noEnv); err != nil {
+			t.Errorf("%v: %v", args, err)
+		}
+	}
+}
+
+func TestTLSConfigHandlesIPv6Literal(t *testing.T) {
+	tc, err := config{URL: "ldaps://[::1]:636"}.tlsConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.ServerName != "::1" {
+		t.Errorf("ServerName = %q, want ::1", tc.ServerName)
+	}
+}
+
+func TestWarningsListRiskyOptIns(t *testing.T) {
+	if w := (config{}).warnings(); len(w) != 0 {
+		t.Errorf("default config warns: %v", w)
+	}
+	if w := (config{InsecureSkipVerify: true, AllowCleartext: true}).warnings(); len(w) != 2 {
+		t.Errorf("warnings = %v, want 2", w)
 	}
 }

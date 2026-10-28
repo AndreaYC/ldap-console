@@ -42,6 +42,9 @@ func run(args []string) error {
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	for _, w := range cfg.warnings() {
+		slog.Warn(w)
+	}
 
 	password, err := bindPassword(cfg.BindDN)
 	if err != nil {

@@ -36,6 +36,9 @@ type Config struct {
 	RangeLimit int
 	// MaxPageSize caps entries per page regardless of the client's request.
 	MaxPageSize int
+	// ReferralSuffixes are naming contexts held by another domain: a search
+	// based at or under one answers with a referral, as an AD DC does.
+	ReferralSuffixes []string
 	// SizeLimit makes the server return only this many entries per search
 	// with sizeLimitExceeded, as an OpenLDAP per-user limit does. 0 = none.
 	SizeLimit int
@@ -162,6 +165,11 @@ func (s *Server) find(m *gldap.SearchMessage) ([]*Entry, int) {
 	base, err := ldap.ParseDN(m.BaseDN)
 	if err != nil {
 		return nil, gldap.ResultInvalidDNSyntax
+	}
+	for _, suffix := range s.cfg.ReferralSuffixes {
+		if sfx, err := ldap.ParseDN(suffix); err == nil && (sfx.EqualFold(base) || sfx.AncestorOfFold(base)) {
+			return nil, gldap.ResultReferral
+		}
 	}
 	filter, err := ldap.CompileFilter(m.Filter)
 	if err != nil {

@@ -21,6 +21,7 @@ go run ./cmd/ldap-console \
 | `LDAP_BIND_PASSWORD` | password. Never a flag, so it can't leak into `ps` or shell history |
 | `-base-dn` / `LDAP_BASE_DN` | defaults to the server's `defaultNamingContext` |
 | `-start-tls`, `-ca-file`, `-insecure-skip-verify` | TLS options; certificates are verified by default |
+| `-allow-cleartext` | permit a password bind over plain `ldap://` to a non-loopback host (refused otherwise) |
 | `-listen` | UI address; must be loopback (the UI has no login and acts as the bind DN) |
 
 To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow the command it prints.
@@ -50,7 +51,9 @@ To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow t
 ## Development
 
 ```sh
-go test -race -cover ./...
+make demo      # console + built-in fake AD, no DC needed
+make install   # ldap-console into $(go env GOPATH)/bin
+make test lint cover
 ```
 
 Tests run against an in-process fake LDAP server (`internal/ldaptest`) that
