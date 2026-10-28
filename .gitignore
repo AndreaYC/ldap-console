@@ -1,0 +1,5 @@
+/ldap-console
+/ldap-demo
+*.out
+coverage.*
+.claude/

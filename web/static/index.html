@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LDAP Console</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">LDAP Console</div>
+    <nav class="views" aria-label="Views">
+      <a href="#/browse" data-view="browse">Browse</a>
+      <a href="#/groups" data-view="groups">Groups</a>
+      <a href="#/search" data-view="search">Search</a>
+    </nav>
+    <div class="find">
+      <input id="find" name="find" type="search" placeholder="Find user, group, computer…" autocomplete="off" aria-label="Quick find">
+      <div id="find-results" class="find-results" hidden></div>
+    </div>
+    <div id="conn" class="conn"></div>
+  </header>
+  <main id="main"></main>
+</body>
+</html>
