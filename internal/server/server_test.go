@@ -216,3 +216,19 @@ func TestServesUIWithRestrictiveHeaders(t *testing.T) {
 		t.Error("missing X-Frame-Options")
 	}
 }
+
+func TestValidDNRejectsFiltersAndAcceptsRealDNs(t *testing.T) {
+	for dn, want := range map[string]bool{
+		"DC=ADVANTECH,DC=CORP":                     true,
+		"CN=a\\,b,OU=R&D,DC=corp,DC=local":         true,
+		"1.3.6.1.4.1.1466.0=#04024869,DC=example":  true,
+		"(&(objectClass=group)(member=CN=x,DC=y))": false,
+		"(cn=Ops)":   false,
+		"not a dn":   false,
+		"CN=x,,DC=y": false,
+	} {
+		if got := validDN(dn); got != want {
+			t.Errorf("validDN(%q) = %v, want %v", dn, got, want)
+		}
+	}
+}

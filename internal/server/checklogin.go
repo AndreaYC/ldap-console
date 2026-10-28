@@ -7,7 +7,6 @@ import (
 
 	"github.com/AndreaYC/ldap-console/internal/directory"
 	"github.com/AndreaYC/ldap-console/internal/session"
-	"github.com/go-ldap/ldap/v3"
 )
 
 var apps = map[directory.App]bool{directory.AppGeneric: true, directory.AppGitea: true, directory.AppOpenWebUI: true}
@@ -44,7 +43,10 @@ func validateLoginCheck(c *directory.LoginCheck) error {
 		if strings.TrimSpace(dn) == "" {
 			continue
 		}
-		if _, err := ldap.ParseDN(dn); err != nil || !strings.Contains(dn, "=") {
+		if strings.HasPrefix(strings.TrimSpace(dn), "(") {
+			return badRequest("%s looks like a filter; enter a DN such as DC=corp,DC=local", name)
+		}
+		if !validDN(dn) {
 			return badRequest("%s is not a valid DN: %q", name, dn)
 		}
 	}
