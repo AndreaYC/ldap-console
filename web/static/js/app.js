@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, errorBox, debounce } from './dom.js';
+import { h, nodes, kindBadge, errorBox, debounce, claim } from './dom.js';
 import { Tree } from './tree.js';
 import { renderEntry } from './entry.js';
 import { renderSearch } from './search.js';
@@ -54,21 +54,25 @@ function setupFind() {
   let rows = [];
   let sel = -1;
 
-  const close = () => { box.hidden = true; sel = -1; };
+  // close also invalidates an in-flight query, so a late answer cannot reopen the box.
+  const close = () => { claim(box); box.hidden = true; sel = -1; };
   const go = (dn) => { close(); input.blur(); location.hash = '#/browse?dn=' + encodeURIComponent(dn); };
   const highlight = () => rows.forEach((r, i) => r.classList.toggle('sel', i === sel));
 
   const run = debounce(async () => {
     const q = input.value.trim();
     if (q.length < 2) return close();
+    const current = claim(box); // results for "ab" must not replace those for "abc"
     try {
       const res = await api.find(q);
-      rows = res.items.map((o) => h('div', { class: 'row', onmousedown: () => go(o.dn), title: o.dn },
+      if (!current()) return;
+      rows =res.items.map((o) => h('div', { class: 'row', onmousedown: () => go(o.dn), title: o.dn },
         kindBadge(o.kind, o.dn), h('span', null, o.name), h('span', { class: 'muted mono find-dn' }, o.dn.split(',').slice(1, 3).join(','))));
       box.replaceChildren(...(rows.length ? rows : [h('div', { class: 'row muted' }, 'No matches')]));
       sel = -1;
       box.hidden = false;
     } catch (err) {
+      if (!current()) return;
       box.replaceChildren(errorBox(err));
       box.hidden = false;
     }
