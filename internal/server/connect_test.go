@@ -169,9 +169,10 @@ func TestCheckLoginRunsAppLoginWithRealBind(t *testing.T) {
 func TestCheckLoginRejectsInvalidRequests(t *testing.T) {
 	h := newTestHandler(t)
 	for name, body := range map[string]string{
-		"no username": `{"app":"generic","userFilter":"(uid={username})"}`,
-		"unknown app": `{"app":"jenkins","username":"alice"}`,
-		"bad base":    `{"app":"generic","username":"alice","userBase":"not a dn"}`,
+		"no username":    `{"app":"generic","userFilter":"(uid={username})"}`,
+		"unknown app":    `{"app":"jenkins","username":"alice"}`,
+		"bad base":       `{"app":"generic","username":"alice","userBase":"not a dn"}`,
+		"filter as base": `{"app":"generic","username":"alice","groupBase":"(&(objectClass=group)(member=CN=Alice,OU=Users,DC=corp,DC=local))"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			decode[errorResponse](t, post(t, h, "/api/check-login", body), http.StatusBadRequest)

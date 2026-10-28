@@ -31,12 +31,35 @@ var scopes = map[string]int{
 	"sub":  ldap.ScopeWholeSubtree,
 }
 
+// attrTypeRE is an RDN attribute type: a name or a numeric OID.
+var attrTypeRE = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*|[0-9]+(\.[0-9]+)*)$`)
+
+// validDN reports whether dn parses with a proper attribute type in every
+// RDN. ldap.ParseDN alone accepts a pasted filter such as "(&(cn=x)...)".
+func validDN(dn string) bool {
+	parsed, err := ldap.ParseDN(dn)
+	if err != nil || len(parsed.RDNs) == 0 {
+		return false
+	}
+	for _, rdn := range parsed.RDNs {
+		if len(rdn.Attributes) == 0 {
+			return false
+		}
+		for _, a := range rdn.Attributes {
+			if !attrTypeRE.MatchString(a.Type) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func dnParam(r *http.Request, name string) (string, error) {
 	dn := strings.TrimSpace(r.URL.Query().Get(name))
 	if dn == "" {
 		return "", badRequest("%s is required", name)
 	}
-	if _, err := ldap.ParseDN(dn); err != nil || !strings.Contains(dn, "=") {
+	if !validDN(dn) {
 		return "", badRequest("%s is not a valid DN: %q", name, dn)
 	}
 	return dn, nil
