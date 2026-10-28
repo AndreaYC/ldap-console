@@ -1,11 +1,17 @@
 BIN := bin
+IMAGE := ldap-console
+PORT ?= 8389
+CA_FILE ?=
+# make does not expand ~; a missing file would make Docker mount an empty directory.
+CA_PATH = $(abspath $(patsubst ~/%,$(HOME)/%,$(CA_FILE)))
+HOST_TZ := $(shell readlink /etc/localtime 2>/dev/null | sed 's|.*zoneinfo/||')
 DEMO_BIND_DN := CN=svc-ldap,OU=Service,DC=corp,DC=local
 DEMO_PASSWORD := test-only-password
 
-.PHONY: help build install test cover lint run demo clean
+.PHONY: help build install test cover lint run demo clean docker-build docker-run docker-stop docker-logs
 
 help: ## List targets
-	@grep -E '^[a-z]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
 
 build: ## Build ldap-console and ldap-demo into bin/
 	go build -o $(BIN)/ldap-console ./cmd/ldap-console
@@ -38,3 +44,24 @@ demo: build ## Run the console against the built-in fake AD (Ctrl-C stops both)
 
 clean: ## Remove build output
 	rm -rf $(BIN)
+
+docker-build: ## Build the container image
+	docker build -t $(IMAGE) .
+
+# Published on 127.0.0.1 only: the console has no login of its own.
+docker-run: docker-build ## Run in the background on 127.0.0.1:$(PORT), restarting with Docker (CA_FILE=company-ca.pem)
+	@$(if $(CA_FILE),test -f "$(CA_PATH)" || { echo "CA_FILE $(CA_PATH) does not exist"; exit 1; })
+	@docker rm -f $(IMAGE) >/dev/null 2>&1 || true
+	docker run -d --name $(IMAGE) --restart unless-stopped \
+		-p 127.0.0.1:$(PORT):8389 \
+		-v ldap-console-config:/home/nonroot/.config/ldap-console \
+		$(if $(HOST_TZ),-e TZ=$(HOST_TZ)) \
+		$(if $(CA_FILE),-v "$(CA_PATH)":/certs/ca.pem:ro -e LDAP_CA_FILE=/certs/ca.pem) \
+		$(IMAGE)
+	@echo "LDAP Console → http://127.0.0.1:$(PORT)"
+
+docker-stop: ## Stop and remove the container (saved settings are kept)
+	docker rm -f $(IMAGE)
+
+docker-logs: ## Follow the container's log
+	docker logs -f $(IMAGE)

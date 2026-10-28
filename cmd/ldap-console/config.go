@@ -19,6 +19,7 @@ type config struct {
 	InsecureSkipVerify bool
 	AllowCleartext     bool
 	Listen             string
+	Container          bool
 	PageSize           uint
 	Timeout            time.Duration
 	Debug              bool
@@ -36,7 +37,8 @@ func parseFlags(args []string, getenv func(string) string) (config, error) {
 	fs.StringVar(&c.CAFile, "ca-file", getenv("LDAP_CA_FILE"), "PEM CA bundle to trust for the server certificate (env LDAP_CA_FILE)")
 	fs.BoolVar(&c.InsecureSkipVerify, "insecure-skip-verify", false, "do not verify the server certificate (testing only)")
 	fs.BoolVar(&c.AllowCleartext, "allow-cleartext", false, "permit a password bind over unencrypted ldap:// (testing only)")
-	fs.StringVar(&c.Listen, "listen", "127.0.0.1:8389", "UI listen address; must be loopback")
+	fs.StringVar(&c.Listen, "listen", "127.0.0.1:8389", "UI listen address; must be loopback unless -container")
+	fs.BoolVar(&c.Container, "container", false, "running in a container: allow a non-loopback -listen; publish the port on 127.0.0.1 only (make docker-run does)")
 	fs.UintVar(&c.PageSize, "page-size", 500, "LDAP paged-results page size")
 	fs.DurationVar(&c.Timeout, "timeout", 30*time.Second, "LDAP operation timeout")
 	fs.BoolVar(&c.Debug, "debug", false, "log every HTTP request")
@@ -56,8 +58,10 @@ func (c config) validate() error {
 	if c.PageSize == 0 || c.PageSize > 10000 {
 		return errors.New("-page-size must be 1..10000")
 	}
-	if err := checkLoopback(c.Listen); err != nil {
-		return err
+	if !c.Container {
+		if err := checkLoopback(c.Listen); err != nil {
+			return err
+		}
 	}
 	if c.URL == "" {
 		return nil // the UI starts on its connect page
@@ -84,6 +88,10 @@ func (c config) warnings() []string {
 	}
 	if c.AllowCleartext {
 		w = append(w, "-allow-cleartext: the bind password may travel unencrypted")
+	}
+	if c.Container && checkLoopback(c.Listen) != nil {
+		w = append(w, "-container: listening on "+c.Listen+"; publish it with -p 127.0.0.1:PORT:PORT, "+
+			"or anyone on your network can browse the directory as you")
 	}
 	return w
 }

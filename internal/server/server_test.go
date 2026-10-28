@@ -181,6 +181,20 @@ func TestAcceptsLocalhostAlias(t *testing.T) {
 	}
 }
 
+// In a container, Docker may publish the console on a different host port
+// than it listens on, so loopback names are accepted on any port.
+func TestAcceptsLoopbackHostOnAnyPort(t *testing.T) {
+	h := newTestHandler(t)
+	for _, host := range []string{"127.0.0.1:9000", "localhost:18389", "[::1]:8389"} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/info", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200", host, rec.Code)
+		}
+	}
+}
+
 func TestRejectsNonGETMethods(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "http://"+testHost+"/api/info", nil)
 	rec := httptest.NewRecorder()

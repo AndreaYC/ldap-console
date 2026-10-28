@@ -35,6 +35,26 @@ ldap-console -url ldaps://dc01.corp.local:636 -bind-dn svc-ldap@corp.local
 
 `-insecure-skip-verify`, `-allow-cleartext`, `-page-size` and `-timeout` also apply to connections made from the page. The page itself cannot turn on the two risky ones.
 | `-listen` | UI address; must be loopback (the UI has no login and acts as the bind DN) |
+| `-container` | allow a non-loopback `-listen` inside a container; set by the Docker image |
+
+### In Docker
+
+```sh
+make docker-run                          # http://127.0.0.1:8389, restarts with Docker
+make docker-run CA_FILE=~/company-ca.pem # trust a company CA
+make docker-logs / make docker-stop
+```
+
+The container doesn't see the CA certificates in your Mac's Keychain. If the
+DC uses a company CA, pass `CA_FILE`; the connect page then fills in
+`/certs/ca.pem` for you. Saved connection settings live in the
+`ldap-console-config` volume.
+
+`make docker-run` publishes the port on `127.0.0.1` only. If you run the
+image yourself, keep the `127.0.0.1:` in `-p 127.0.0.1:8389:8389`. Without it,
+anyone on your network can browse the directory as you. Inside the image the
+console runs with `-container`, which lets it listen on `0.0.0.0` (so it can
+receive Docker's forwarded traffic) and leaves exposure to the `-p` setting.
 
 To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow the command it prints.
 
@@ -56,7 +76,7 @@ To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow t
 ## Security
 
 - Read-only towards the directory. The only POST endpoints are connect and disconnect, and they accept a request only when all three checks pass: the `Origin` is the console itself, the body is JSON, and the request carries a token generated at each launch. A malicious page open in the same browser therefore can't point the console at a server it controls.
-- The UI listens only on loopback, and requests are refused if their `Host` header isn't a local name (this blocks DNS-rebinding attacks).
+- The UI listens only on loopback (in Docker: published on `127.0.0.1` only), and requests are refused if their `Host` header isn't a local name (this blocks DNS-rebinding attacks).
 - Strict CSP. Directory values are only rendered as text, never as HTML.
 - User input is escaped before it goes into filters. Raw filters from the Search view are compiled and checked before they're sent.
 

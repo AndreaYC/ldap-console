@@ -81,3 +81,16 @@ func TestWarningsListRiskyOptIns(t *testing.T) {
 		t.Errorf("warnings = %v, want 2", w)
 	}
 }
+
+func TestContainerModeAllowsListeningOnAllInterfaces(t *testing.T) {
+	if _, err := parseFlags([]string{"-listen", "0.0.0.0:8389"}, noEnv); err == nil {
+		t.Fatal("0.0.0.0 accepted without -container")
+	}
+	c, err := parseFlags([]string{"-container", "-listen", "0.0.0.0:8389"}, noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.warnings()) == 0 {
+		t.Error("container mode on a non-loopback address should warn about publishing the port")
+	}
+}

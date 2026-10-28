@@ -142,3 +142,16 @@ func TestDisconnectDropsSession(t *testing.T) {
 	}
 	decode[errorResponse](t, get(t, h, "/api/entry", "dn", ldaptest.BaseDN), http.StatusServiceUnavailable)
 }
+
+func TestInfoFillsUnsavedFieldsFromLaunchDefaults(t *testing.T) {
+	profile := filepath.Join(t.TempDir(), "profile.json")
+	if err := session.SaveProfile(profile, session.Profile{URL: "ldaps://dc01:636"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(nil, Options{ListenAddr: testHost, ProfilePath: profile,
+		Defaults: session.Settings{URL: "ldaps://other:636", CAFile: "/certs/ca.pem"}})
+	got := decode[Info](t, get(t, h, "/api/info"), http.StatusOK).Profile
+	if got.URL != "ldaps://dc01:636" || got.CAFile != "/certs/ca.pem" {
+		t.Errorf("profile = %+v, want saved URL and default CA file", got)
+	}
+}

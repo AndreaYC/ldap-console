@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -45,7 +46,7 @@ func (s *Server) info() Info {
 	s.mu.RUnlock()
 	info := Info{ReadOnly: true, Token: s.token}
 	if sess == nil {
-		p := s.savedProfile()
+		p := withDefaults(s.savedProfile(), session.ProfileOf(s.defaults))
 		info.Profile = &p
 		return info
 	}
@@ -65,6 +66,17 @@ func (s *Server) savedProfile() session.Profile {
 	if err != nil {
 		slog.Warn("ignoring unreadable profile", "path", s.profile, "err", err)
 	}
+	return p
+}
+
+// withDefaults fills the fields the saved profile leaves empty, e.g. a CA
+// file path given at launch (LDAP_CA_FILE in the container image).
+func withDefaults(p, d session.Profile) session.Profile {
+	p.URL = cmp.Or(p.URL, d.URL)
+	p.BindDN = cmp.Or(p.BindDN, d.BindDN)
+	p.BaseDN = cmp.Or(p.BaseDN, d.BaseDN)
+	p.CAFile = cmp.Or(p.CAFile, d.CAFile)
+	p.StartTLS = p.StartTLS || d.StartTLS
 	return p
 }
 

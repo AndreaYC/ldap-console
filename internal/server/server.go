@@ -40,7 +40,8 @@ type Info struct {
 // Options configures the handler.
 type Options struct {
 	// ListenAddr is the host:port the server is bound to; requests whose
-	// Host header names anything else are refused (DNS-rebinding defence).
+	// Host header names a host other than it or a loopback name are refused
+	// (DNS-rebinding defence).
 	ListenAddr string
 	// Loc is the time zone for decoded timestamps.
 	Loc *time.Location
@@ -117,21 +118,27 @@ func newToken() string {
 	return hex.EncodeToString(b)
 }
 
+// allowedHosts lists the host names (without port) a request may address.
+// Only the name matters against DNS rebinding: an attacker's page reaches us
+// under its own name. The port is not checked because Docker may publish
+// the console on a different host port than it listens on.
 func allowedHosts(listen string) map[string]bool {
-	_, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return map[string]bool{listen: true}
-	}
-	hosts := map[string]bool{listen: true}
-	for _, h := range []string{"localhost", "127.0.0.1", "::1"} {
-		hosts[net.JoinHostPort(h, port)] = true
+	hosts := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
+	if h, _, err := net.SplitHostPort(listen); err == nil {
+		if ip := net.ParseIP(h); h != "" && (ip == nil || !ip.IsUnspecified()) {
+			hosts[h] = true
+		}
 	}
 	return hosts
 }
 
 func onlyHosts(allowed map[string]bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !allowed[r.Host] {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if !allowed[host] {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}

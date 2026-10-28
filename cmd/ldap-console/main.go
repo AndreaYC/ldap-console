@@ -66,16 +66,20 @@ func run(args []string) error {
 	}
 	handler := server.New(initial, server.Options{ListenAddr: cfg.Listen, Loc: time.Local, Defaults: cfg.settings(), ProfilePath: profile})
 	defer func() { _ = handler.Close() }()
-	return serve(ctx, cfg.Listen, handler)
+	url := "http://" + cfg.Listen
+	if cfg.Container {
+		url = "the host port published with docker run -p"
+	}
+	return serve(ctx, cfg.Listen, url, handler)
 }
 
-func serve(ctx context.Context, addr string, h http.Handler) error {
+func serve(ctx context.Context, addr, url string, h http.Handler) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
-	fmt.Fprintf(os.Stderr, "\n  LDAP Console ready → http://%s\n\n", addr)
+	fmt.Fprintf(os.Stderr, "\n  LDAP Console ready → %s\n\n", url)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
