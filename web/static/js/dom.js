@@ -1,4 +1,5 @@
 import { toCSV } from './csv.js';
+export { claim } from './claim.js';
 export { splitDN, rdnValue } from './format.js';
 
 // Tiny DOM helpers. All text goes through textContent / text nodes, never

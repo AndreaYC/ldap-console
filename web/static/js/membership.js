@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim } from './dom.js';
 import { plural } from './format.js';
 
 function tags(m) {
@@ -80,14 +80,16 @@ function membershipTable(res, { title, csvName, showGroupType }) {
 }
 
 export async function renderMemberOf(el, dn) {
+  const current = claim(el);
   el.replaceChildren(loading('Resolving group memberships…'));
   try {
     const res = await api.userGroups(dn);
+    if (!current()) return;
     el.replaceChildren(
       h('p', { class: 'notice' }, 'Effective groups: direct, inherited through nested groups (Via), and the AD primary group.'),
       membershipTable(res, { title: 'Member of', csvName: `${res.subject.name}-groups.csv`, showGroupType: true }));
   } catch (err) {
-    el.replaceChildren(errorBox(err));
+    if (current()) el.replaceChildren(errorBox(err));
   }
 }
 
@@ -96,17 +98,22 @@ export async function renderMembers(el, dn) {
   const body = h('div');
   const head = h('div', { class: 'toolbar' },
     h('label', { for: 'nested' }, nested, ' Include nested members (people in sub-groups too)'));
+  claim(el); // drop a still-loading Member of response
   el.replaceChildren(head, body);
 
+  // Toggling nested while a load runs must not let the older answer win.
   const load = async () => {
+    const current = claim(body);
+    const isNested = nested.checked;
     body.replaceChildren(loading('Resolving members…'));
     try {
-      const res = await api.groupMembers(dn, nested.checked);
+      const res = await api.groupMembers(dn, isNested);
+      if (!current()) return;
       body.replaceChildren(membershipTable(res, {
-        title: 'Members', csvName: `${res.subject.name}-members${nested.checked ? '-nested' : ''}.csv`, showGroupType: false,
+        title: 'Members', csvName: `${res.subject.name}-members${isNested ? '-nested' : ''}.csv`, showGroupType: false,
       }));
     } catch (err) {
-      body.replaceChildren(errorBox(err));
+      if (current()) body.replaceChildren(errorBox(err));
     }
   };
   nested.addEventListener('change', load);

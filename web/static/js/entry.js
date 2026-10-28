@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue } from './dom.js';
+import { h, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue, claim } from './dom.js';
 import { renderMemberOf, renderMembers } from './membership.js';
 
 function valueNode(v) {
@@ -31,15 +31,19 @@ function attributesTable(entry) {
 const membershipKinds = new Set(['user', 'computer', 'group', 'foreignSecurityPrincipal', 'contact']);
 
 // renderEntry shows one entry with Attributes / Member of / Members tabs.
+// A response for an entry the user has already navigated away from is
+// dropped, so it cannot replace the newer entry or rewrite the URL.
 export async function renderEntry(el, dn, tab) {
+  const current = claim(el);
   el.replaceChildren(loading());
   let entry;
   try {
     entry = await api.entry(dn);
   } catch (err) {
-    el.replaceChildren(errorBox(err));
+    if (current()) el.replaceChildren(errorBox(err));
     return;
   }
+  if (!current()) return;
   const name = entry.attributes.find((a) => /^(displayName|cn|ou)$/i.test(a.name))?.values[0]?.text || rdnValue(dn);
 
   const tabs = [['attributes', 'Attributes']];
@@ -53,7 +57,10 @@ export async function renderEntry(el, dn, tab) {
   const show = (id) => {
     for (const b of bar.children) b.classList.toggle('active', b.dataset.tab === id);
     history.replaceState(null, '', `#/browse?dn=${encodeURIComponent(dn)}&tab=${id}`);
-    if (id === 'attributes') body.replaceChildren(attributesTable(entry));
+    if (id === 'attributes') {
+      claim(body); // drop a still-loading Member of / Members response
+      body.replaceChildren(attributesTable(entry));
+    }
     if (id === 'memberof') renderMemberOf(body, dn);
     if (id === 'members') renderMembers(body, dn);
   };
