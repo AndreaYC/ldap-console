@@ -1,15 +1,13 @@
 package main
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
 	"net"
-	"net/url"
-	"os"
 	"time"
+
+	"github.com/AndreaYC/ldap-console/internal/session"
 )
 
 type config struct {
@@ -31,7 +29,7 @@ type config struct {
 func parseFlags(args []string, getenv func(string) string) (config, error) {
 	var c config
 	fs := flag.NewFlagSet("ldap-console", flag.ContinueOnError)
-	fs.StringVar(&c.URL, "url", getenv("LDAP_URL"), "server URL, e.g. ldaps://dc01.corp.local:636 (env LDAP_URL)")
+	fs.StringVar(&c.URL, "url", getenv("LDAP_URL"), "server URL, e.g. ldaps://dc01.corp.local:636; empty = choose it in the UI (env LDAP_URL)")
 	fs.StringVar(&c.BindDN, "bind-dn", getenv("LDAP_BIND_DN"), "bind DN or AD UPN (user@corp.local); empty = anonymous (env LDAP_BIND_DN)")
 	fs.StringVar(&c.BaseDN, "base-dn", getenv("LDAP_BASE_DN"), "search base; default = server's defaultNamingContext (env LDAP_BASE_DN)")
 	fs.BoolVar(&c.StartTLS, "start-tls", false, "upgrade ldap:// with StartTLS")
@@ -43,8 +41,9 @@ func parseFlags(args []string, getenv func(string) string) (config, error) {
 	fs.DurationVar(&c.Timeout, "timeout", 30*time.Second, "LDAP operation timeout")
 	fs.BoolVar(&c.Debug, "debug", false, "log every HTTP request")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: ldap-console -url ldaps://host:636 -bind-dn user@corp.local\n\n"+
-			"The bind password is read from LDAP_BIND_PASSWORD or prompted for.\n\n")
+		fmt.Fprintf(fs.Output(), "Usage: ldap-console [-url ldaps://host:636 -bind-dn user@corp.local]\n\n"+
+			"Without -url the browser UI asks for the server and password.\n"+
+			"With -url the bind password is read from LDAP_BIND_PASSWORD or prompted for.\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -54,34 +53,27 @@ func parseFlags(args []string, getenv func(string) string) (config, error) {
 }
 
 func (c config) validate() error {
-	if c.URL == "" {
-		return errors.New("-url is required (or set LDAP_URL)")
-	}
-	u, err := url.Parse(c.URL)
-	if err != nil || (u.Scheme != "ldap" && u.Scheme != "ldaps") || u.Host == "" {
-		return fmt.Errorf("-url %q must look like ldap://host:389 or ldaps://host:636", c.URL)
-	}
-	if c.StartTLS && u.Scheme == "ldaps" {
-		return errors.New("-start-tls only applies to ldap:// URLs")
-	}
-	if c.sendsCleartextPassword(u) && !c.AllowCleartext {
-		return errors.New("refusing to send the bind password in cleartext over ldap://; " +
-			"use ldaps://, add -start-tls, or pass -allow-cleartext for a lab server")
-	}
 	if c.PageSize == 0 || c.PageSize > 10000 {
 		return errors.New("-page-size must be 1..10000")
 	}
-	return checkLoopback(c.Listen)
+	if err := checkLoopback(c.Listen); err != nil {
+		return err
+	}
+	if c.URL == "" {
+		return nil // the UI starts on its connect page
+	}
+	return c.settings().Validate()
 }
 
-// sendsCleartextPassword reports a password bind over an unencrypted
-// connection to a non-loopback host.
-func (c config) sendsCleartextPassword(u *url.URL) bool {
-	if u.Scheme != "ldap" || c.StartTLS || c.BindDN == "" {
-		return false
+// settings returns the connection settings. Without -url, the flag-only
+// fields still apply to connections made from the connect page.
+func (c config) settings() session.Settings {
+	return session.Settings{
+		URL: c.URL, BindDN: c.BindDN, BaseDN: c.BaseDN, StartTLS: c.StartTLS, CAFile: c.CAFile,
+		InsecureSkipVerify: c.InsecureSkipVerify, AllowCleartext: c.AllowCleartext,
+		PageSize: uint32(c.PageSize), // #nosec G115 -- validate() caps it at 10000
+		Timeout:  c.Timeout,
 	}
-	ip := net.ParseIP(u.Hostname())
-	return u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback())
 }
 
 // warnings lists risky settings the operator opted into.
@@ -110,31 +102,4 @@ func checkLoopback(addr string) error {
 		return nil
 	}
 	return fmt.Errorf("-listen %q is not a loopback address; the console has no authentication of its own", addr)
-}
-
-func (c config) tlsConfig() (*tls.Config, error) {
-	u, err := url.Parse(c.URL)
-	if err != nil {
-		return nil, err
-	}
-	cfg := &tls.Config{
-		ServerName:         u.Hostname(),
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: c.InsecureSkipVerify, // #nosec G402 -- explicit opt-in flag for lab servers
-	}
-	if c.CAFile != "" {
-		pem, err := os.ReadFile(c.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("read -ca-file: %w", err)
-		}
-		pool, err := x509.SystemCertPool()
-		if err != nil {
-			pool = x509.NewCertPool()
-		}
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("-ca-file %s contains no PEM certificates", c.CAFile)
-		}
-		cfg.RootCAs = pool
-	}
-	return cfg, nil
 }

@@ -17,9 +17,8 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/AndreaYC/ldap-console/internal/directory"
-	"github.com/AndreaYC/ldap-console/internal/ldapclient"
 	"github.com/AndreaYC/ldap-console/internal/server"
+	"github.com/AndreaYC/ldap-console/internal/session"
 )
 
 func main() {
@@ -46,54 +45,36 @@ func run(args []string) error {
 		slog.Warn(w)
 	}
 
-	password, err := bindPassword(cfg.BindDN)
-	if err != nil {
-		return err
-	}
-	tlsCfg, err := cfg.tlsConfig()
-	if err != nil {
-		return err
-	}
-	client, err := ldapclient.New(ldapclient.Config{
-		URL: cfg.URL, BindDN: cfg.BindDN, Password: password,
-		StartTLS: cfg.StartTLS, TLS: tlsCfg, Timeout: cfg.Timeout, PageSize: uint32(cfg.PageSize), // #nosec G115 -- validate() caps it at 10000
-	})
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root, err := client.RootDSE(ctx)
+	var initial *session.Session
+	if cfg.URL != "" {
+		password, err := bindPassword(cfg.BindDN)
+		if err != nil {
+			return err
+		}
+		if initial, err = session.Open(ctx, cfg.settings(), password); err != nil {
+			return err
+		}
+		slog.Info("connected", "server", cfg.URL, "vendor", initial.Root.Vendor, "base", initial.BaseDN, "bind", cfg.BindDN)
+	}
+	profile, err := session.DefaultProfilePath()
 	if err != nil {
-		return err
+		slog.Warn("connection settings will not be remembered", "err", err)
+		profile = ""
 	}
-	base := cfg.BaseDN
-	if base == "" {
-		base = root.DefaultNamingContext
-	}
-	if base == "" {
-		return errors.New("server advertises no naming context; set -base-dn")
-	}
-
-	info := server.Info{
-		URL: cfg.URL, BindDN: cfg.BindDN, BaseDN: base,
-		NamingContexts: root.NamingContexts, Vendor: root.Vendor, IsAD: root.IsAD,
-	}
-	handler := server.New(client, directory.New(client, base, root.IsAD), info,
-		server.Options{ListenAddr: cfg.Listen, Loc: time.Local})
-	return serve(ctx, cfg.Listen, handler, info)
+	handler := server.New(initial, server.Options{ListenAddr: cfg.Listen, Loc: time.Local, Defaults: cfg.settings(), ProfilePath: profile})
+	defer func() { _ = handler.Close() }()
+	return serve(ctx, cfg.Listen, handler)
 }
 
-func serve(ctx context.Context, addr string, h http.Handler, info server.Info) error {
+func serve(ctx context.Context, addr string, h http.Handler) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
-	slog.Info("connected", "server", info.URL, "vendor", info.Vendor, "base", info.BaseDN, "bind", info.BindDN)
 	fmt.Fprintf(os.Stderr, "\n  LDAP Console ready → http://%s\n\n", addr)
 
 	errc := make(chan error, 1)

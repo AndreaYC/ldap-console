@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,23 +11,22 @@ import (
 	"time"
 
 	"github.com/AndreaYC/ldap-console/internal/directory"
-	"github.com/AndreaYC/ldap-console/internal/ldapclient"
 	"github.com/AndreaYC/ldap-console/internal/ldaptest"
+	"github.com/AndreaYC/ldap-console/internal/session"
 )
 
 const testHost = "127.0.0.1:8389"
 
 func newTestHandler(t *testing.T) http.Handler {
 	t.Helper()
-	cfg := ldaptest.CorpAD()
-	srv := ldaptest.Start(t, cfg)
-	c, err := ldapclient.New(ldapclient.Config{URL: srv.URL, BindDN: cfg.BindDN, Password: cfg.Password})
+	srv := ldaptest.Start(t, ldaptest.CorpAD())
+	sess, err := session.Open(context.Background(), session.Settings{URL: srv.URL, BindDN: ldaptest.BindDN}, ldaptest.Password)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
-	info := Info{URL: srv.URL, BindDN: cfg.BindDN, BaseDN: ldaptest.BaseDN, IsAD: true}
-	return New(c, directory.New(c, ldaptest.BaseDN, true), info, Options{ListenAddr: testHost, Loc: time.UTC})
+	h := New(sess, Options{ListenAddr: testHost, Loc: time.UTC})
+	t.Cleanup(func() { _ = h.Close() })
+	return h
 }
 
 func get(t *testing.T, h http.Handler, path string, params ...string) *httptest.ResponseRecorder {
@@ -58,7 +58,7 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder, wantStatus int)
 
 func TestInfoReportsConnectionAndReadOnlyMode(t *testing.T) {
 	got := decode[Info](t, get(t, newTestHandler(t), "/api/info"), http.StatusOK)
-	if got.BaseDN != ldaptest.BaseDN || !got.IsAD || got.BindDN != ldaptest.BindDN || !got.ReadOnly {
+	if got.BaseDN != ldaptest.BaseDN || !got.IsAD || got.BindDN != ldaptest.BindDN || !got.ReadOnly || !got.Connected || got.Token == "" {
 		t.Errorf("info = %+v", got)
 	}
 }

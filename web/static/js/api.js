@@ -1,9 +1,7 @@
-async function get(path, params = {}) {
-  const url = new URL(path, location.origin);
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
-  }
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+let token = '';
+
+async function call(url, init) {
+  const res = await fetch(url, init);
   let body;
   try {
     body = await res.json();
@@ -14,8 +12,31 @@ async function get(path, params = {}) {
   return body;
 }
 
+function get(path, params = {}) {
+  const url = new URL(path, location.origin);
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  }
+  return call(url, { headers: { Accept: 'application/json' } });
+}
+
+// post sends the per-launch token the server requires on every POST.
+function post(path, body) {
+  return call(new URL(path, location.origin), {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Console-Token': token },
+    body: JSON.stringify(body),
+  });
+}
+
 export const api = {
-  info: () => get('/api/info'),
+  info: async () => {
+    const info = await get('/api/info');
+    token = info.token;
+    return info;
+  },
+  connect: (settings) => post('/api/connect', settings),
+  disconnect: () => post('/api/disconnect', {}),
   children: (dn) => get('/api/children', { dn }),
   entry: (dn) => get('/api/entry', { dn }),
   search: (params) => get('/api/search', params),

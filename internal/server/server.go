@@ -1,37 +1,40 @@
 // Package server exposes the directory over a local, read-only JSON API and
-// serves the embedded browser UI.
+// serves the embedded browser UI. The only state it changes is which server
+// it is connected to.
 package server
 
 import (
-	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/AndreaYC/ldap-console/internal/attr"
-	"github.com/AndreaYC/ldap-console/internal/directory"
-	"github.com/AndreaYC/ldap-console/internal/ldapclient"
+	"github.com/AndreaYC/ldap-console/internal/session"
 	"github.com/AndreaYC/ldap-console/web"
-	"github.com/go-ldap/ldap/v3"
 )
 
-// LDAP is the client surface the handlers need.
-type LDAP interface {
-	Search(ctx context.Context, q ldapclient.Query) (ldapclient.Result, error)
-	Entry(ctx context.Context, dn string, attrs ...string) (*ldap.Entry, error)
-}
-
-// Info describes the connection, shown in the UI header.
+// Info describes the connection, shown in the UI header. Profile pre-fills
+// the connect page: the current settings, or the saved ones when disconnected.
 type Info struct {
-	URL            string   `json:"url"`
-	BindDN         string   `json:"bindDN"`
-	BaseDN         string   `json:"baseDN"`
-	NamingContexts []string `json:"namingContexts"`
-	Vendor         string   `json:"vendor"`
-	IsAD           bool     `json:"isAD"`
-	ReadOnly       bool     `json:"readOnly"`
+	Connected      bool             `json:"connected"`
+	URL            string           `json:"url,omitempty"`
+	BindDN         string           `json:"bindDN,omitempty"`
+	BaseDN         string           `json:"baseDN,omitempty"`
+	NamingContexts []string         `json:"namingContexts,omitempty"`
+	Vendor         string           `json:"vendor,omitempty"`
+	IsAD           bool             `json:"isAD,omitempty"`
+	ReadOnly       bool             `json:"readOnly"`
+	Profile        *session.Profile `json:"profile,omitempty"`
+	// Token must accompany every POST. Only this console's own page can read
+	// it: other origins get no CORS access and foreign Host headers are refused.
+	Token string `json:"token"`
 }
 
 // Options configures the handler.
@@ -43,33 +46,49 @@ type Options struct {
 	Loc *time.Location
 	// RequestTimeout bounds each API call; 0 means one minute.
 	RequestTimeout time.Duration
+	// Defaults supplies the flag-only settings (certificate checks, cleartext
+	// policy, paging, timeout) for connections opened from the connect page.
+	Defaults session.Settings
+	// ProfilePath is where the last successful connect page settings are
+	// saved; empty means they are not remembered.
+	ProfilePath string
 }
 
-type handler struct {
-	ldap    LDAP
-	dir     *directory.Service
-	info    Info
-	render  attr.Renderer
-	timeout time.Duration
+// Server is the HTTP handler for the API and UI. It holds at most one
+// directory session, which the connect page can replace.
+type Server struct {
+	http.Handler
+	mu       sync.RWMutex
+	sess     *session.Session
+	render   attr.Renderer
+	timeout  time.Duration
+	token    string
+	defaults session.Settings
+	profile  string
 }
 
-// New returns the HTTP handler for the API and UI.
-func New(c LDAP, dir *directory.Service, info Info, opts Options) http.Handler {
-	info.ReadOnly = true
-	h := &handler{ldap: c, dir: dir, info: info, render: attr.Renderer{Loc: opts.Loc}, timeout: opts.RequestTimeout}
-	if h.timeout == 0 {
-		h.timeout = time.Minute
+// New returns the server. initial may be nil, in which case the UI starts
+// on the connect page.
+func New(initial *session.Session, opts Options) *Server {
+	s := &Server{
+		sess: initial, render: attr.Renderer{Loc: opts.Loc}, timeout: opts.RequestTimeout,
+		token: newToken(), defaults: opts.Defaults, profile: opts.ProfilePath,
+	}
+	if s.timeout == 0 {
+		s.timeout = time.Minute
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/info", h.handleInfo)
-	mux.HandleFunc("GET /api/children", h.handleChildren)
-	mux.HandleFunc("GET /api/entry", h.handleEntry)
-	mux.HandleFunc("GET /api/search", h.handleSearch)
-	mux.HandleFunc("GET /api/find", h.handleFind)
-	mux.HandleFunc("GET /api/groups", h.handleGroups)
-	mux.HandleFunc("GET /api/user-groups", h.handleUserGroups)
-	mux.HandleFunc("GET /api/group-members", h.handleGroupMembers)
+	mux.HandleFunc("GET /api/info", s.handleInfo)
+	mux.HandleFunc("POST /api/connect", s.handleConnect)
+	mux.HandleFunc("POST /api/disconnect", s.handleDisconnect)
+	mux.HandleFunc("GET /api/children", s.withSession(s.handleChildren))
+	mux.HandleFunc("GET /api/entry", s.withSession(s.handleEntry))
+	mux.HandleFunc("GET /api/search", s.withSession(s.handleSearch))
+	mux.HandleFunc("GET /api/find", s.withSession(s.handleFind))
+	mux.HandleFunc("GET /api/groups", s.withSession(s.handleGroups))
+	mux.HandleFunc("GET /api/user-groups", s.withSession(s.handleUserGroups))
+	mux.HandleFunc("GET /api/group-members", s.withSession(s.handleGroupMembers))
 
 	static, err := fs.Sub(web.Static, "static")
 	if err != nil {
@@ -77,7 +96,25 @@ func New(c LDAP, dir *directory.Service, info Info, opts Options) http.Handler {
 	}
 	mux.Handle("GET /", http.FileServerFS(static))
 
-	return logRequests(securityHeaders(onlyHosts(allowedHosts(opts.ListenAddr), readOnly(mux))))
+	s.Handler = logRequests(securityHeaders(onlyHosts(allowedHosts(opts.ListenAddr), guardWrites(s.token, mux))))
+	return s
+}
+
+// Close releases the current session, if any.
+func (s *Server) Close() error {
+	old := s.swap(nil)
+	if old == nil {
+		return nil
+	}
+	return old.Close()
+}
+
+func newToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand does not fail on supported platforms
+	}
+	return hex.EncodeToString(b)
 }
 
 func allowedHosts(listen string) map[string]bool {
@@ -102,13 +139,35 @@ func onlyHosts(allowed map[string]bool, next http.Handler) http.Handler {
 	})
 }
 
-// readOnly refuses every method that could change state. Phase 1 has no
-// write endpoints; this keeps it that way even if one is added by mistake.
-func readOnly(next http.Handler) http.Handler {
+// postPaths are the only endpoints that accept POST. They change which
+// server the console talks to; nothing changes the directory itself.
+var postPaths = map[string]bool{"/api/connect": true, "/api/disconnect": true}
+
+// guardWrites lets GET and HEAD through. A POST must go to one of postPaths
+// and come from this console's own page: same Origin, a JSON body (which a
+// cross-site form cannot send without a CORS preflight we never answer), and
+// the per-launch token from /api/info.
+func guardWrites(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodPost || !postPaths[r.URL.Path] {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "read-only console", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("Origin") != "http://"+r.Host {
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return
+		}
+		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+			http.Error(w, "expected application/json", http.StatusUnsupportedMediaType)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Console-Token")), []byte(token)) != 1 {
+			http.Error(w, "missing or wrong console token; reload the page", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -175,3 +175,15 @@ td.attr-name { width: 220px; font-family: var(--mono); font-size: 12px; color: v
 .namecell { display: inline-flex; gap: 6px; align-items: center; }
 .find-dn { margin-left: auto; font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 input.wide { min-width: 320px; }
+
+/* connect page */
+.connect { max-width: 460px; margin: 32px auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; }
+.connect h1 { font-size: 18px; margin: 0 0 16px; font-weight: 650; }
+.connect .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.connect .field input { width: 100%; }
+.connect .hint { font-size: 11px; }
+.connect .check { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; }
+.connect details { margin: 4px 0 12px; }
+.connect summary { cursor: pointer; color: var(--muted); margin-bottom: 10px; }
+.connect .toolbar { margin: 12px 0 0; }
+[hidden] { display: none !important; }

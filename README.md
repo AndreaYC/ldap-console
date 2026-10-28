@@ -7,21 +7,33 @@ Node build step.
 ## Run
 
 ```sh
+make install
+ldap-console        # → http://127.0.0.1:8389
+```
+
+With no `-url`, the page asks for the server, bind account and password. The
+server, account, base DN, StartTLS setting and CA file are remembered in
+`~/Library/Application Support/ldap-console/profile.json` (or `~/.config/…`
+on Linux). The password is never saved. Use **Switch** in the header to
+change servers.
+
+You can also connect at launch, skipping the page:
+
+```sh
 export LDAP_BIND_PASSWORD='…'          # or leave unset to be prompted
-go run ./cmd/ldap-console \
-  -url ldaps://dc01.corp.local:636 \
-  -bind-dn svc-ldap@corp.local          # AD UPN or full DN
-# → http://127.0.0.1:8389
+ldap-console -url ldaps://dc01.corp.local:636 -bind-dn svc-ldap@corp.local
 ```
 
 | Flag / env | Purpose |
 |---|---|
-| `-url` / `LDAP_URL` | `ldap://host:389` or `ldaps://host:636` |
+| `-url` / `LDAP_URL` | `ldap://host:389` or `ldaps://host:636`; empty = choose it in the UI |
 | `-bind-dn` / `LDAP_BIND_DN` | bind identity; empty = anonymous (AD refuses this) |
 | `LDAP_BIND_PASSWORD` | password. Never a flag, so it can't leak into `ps` or shell history |
 | `-base-dn` / `LDAP_BASE_DN` | defaults to the server's `defaultNamingContext` |
 | `-start-tls`, `-ca-file`, `-insecure-skip-verify` | TLS options; certificates are verified by default |
 | `-allow-cleartext` | permit a password bind over plain `ldap://` to a non-loopback host (refused otherwise) |
+
+`-insecure-skip-verify`, `-allow-cleartext`, `-page-size` and `-timeout` also apply to connections made from the page. The page itself cannot turn on the two risky ones.
 | `-listen` | UI address; must be loopback (the UI has no login and acts as the bind DN) |
 
 To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow the command it prints.
@@ -43,7 +55,7 @@ To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow t
 
 ## Security
 
-- Read-only. Any method other than GET/HEAD is rejected.
+- Read-only towards the directory. The only POST endpoints are connect and disconnect, and they accept a request only when all three checks pass: the `Origin` is the console itself, the body is JSON, and the request carries a token generated at each launch. A malicious page open in the same browser therefore can't point the console at a server it controls.
 - The UI listens only on loopback, and requests are refused if their `Host` header isn't a local name (this blocks DNS-rebinding attacks).
 - Strict CSP. Directory values are only rendered as text, never as HTML.
 - User input is escaped before it goes into filters. Raw filters from the Search view are compiled and checked before they're sent.

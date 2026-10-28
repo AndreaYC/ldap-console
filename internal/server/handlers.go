@@ -13,6 +13,7 @@ import (
 	"github.com/AndreaYC/ldap-console/internal/attr"
 	"github.com/AndreaYC/ldap-console/internal/directory"
 	"github.com/AndreaYC/ldap-console/internal/ldapclient"
+	"github.com/AndreaYC/ldap-console/internal/session"
 	"github.com/go-ldap/ldap/v3"
 )
 
@@ -40,44 +41,40 @@ type errorResponse struct {
 // returned for "*"; they answer "when does this password expire / is it locked".
 var adConstructedAttrs = []string{"msDS-UserPasswordExpiryTimeComputed", "msDS-User-Account-Control-Computed"}
 
-func (h *handler) handleInfo(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, h.info)
-}
-
-func (h *handler) handleChildren(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleChildren(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	dn, err := dnParam(r, "dn")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	ctx, cancel := h.ctx(r)
+	ctx, cancel := s.ctx(r)
 	defer cancel()
-	res, err := h.dir.Children(ctx, dn)
+	res, err := sess.Dir.Children(ctx, dn)
 	respond(w, res, err)
 }
 
-func (h *handler) handleEntry(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	dn, err := dnParam(r, "dn")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	attrs := []string{"*", "+"}
-	if h.info.IsAD {
+	if sess.Root.IsAD {
 		attrs = append(attrs, adConstructedAttrs...)
 	}
-	ctx, cancel := h.ctx(r)
+	ctx, cancel := s.ctx(r)
 	defer cancel()
-	e, err := h.ldap.Entry(ctx, dn, attrs...)
+	e, err := sess.Client.Entry(ctx, dn, attrs...)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.toEntryResponse(e))
+	writeJSON(w, http.StatusOK, s.toEntryResponse(e))
 }
 
-func (h *handler) handleSearch(w http.ResponseWriter, r *http.Request) {
-	q, err := parseSearch(r, h.info.BaseDN)
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, sess *session.Session) {
+	q, err := parseSearch(r, sess.BaseDN)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -89,16 +86,16 @@ func (h *handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if hideObjectClass {
 		q.Attrs = append(q.Attrs, "objectClass")
 	}
-	ctx, cancel := h.ctx(r)
+	ctx, cancel := s.ctx(r)
 	defer cancel()
-	res, err := h.ldap.Search(ctx, q)
+	res, err := sess.Client.Search(ctx, q)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	out := searchResponse{Entries: make([]entryResponse, 0, len(res.Entries)), Truncated: res.Truncated}
 	for _, e := range res.Entries {
-		er := h.toEntryResponse(e)
+		er := s.toEntryResponse(e)
 		if hideObjectClass {
 			er.Attributes = slices.DeleteFunc(er.Attributes, func(a attribute) bool { return strings.EqualFold(a.Name, "objectClass") })
 		}
@@ -107,19 +104,19 @@ func (h *handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (h *handler) handleFind(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFind(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		writeError(w, badRequest("q is required"))
 		return
 	}
-	ctx, cancel := h.ctx(r)
+	ctx, cancel := s.ctx(r)
 	defer cancel()
-	res, err := h.dir.Find(ctx, q)
+	res, err := sess.Dir.Find(ctx, q)
 	respond(w, res, err)
 }
 
-func (h *handler) handleGroups(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	base := ""
 	if r.URL.Query().Get("base") != "" {
 		var err error
@@ -128,50 +125,50 @@ func (h *handler) handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ctx, cancel := h.ctx(r)
+	ctx, cancel := s.ctx(r)
 	defer cancel()
-	res, err := h.dir.Groups(ctx, base)
+	res, err := sess.Dir.Groups(ctx, base)
 	respond(w, res, err)
 }
 
-func (h *handler) handleUserGroups(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUserGroups(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	dn, err := dnParam(r, "dn")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	ctx, cancel := h.ctx(r)
+	ctx, cancel := s.ctx(r)
 	defer cancel()
-	res, err := h.dir.GroupsOf(ctx, dn)
+	res, err := sess.Dir.GroupsOf(ctx, dn)
 	respond(w, res, err)
 }
 
-func (h *handler) handleGroupMembers(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGroupMembers(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	dn, err := dnParam(r, "dn")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	nested := r.URL.Query().Get("nested") == "true"
-	ctx, cancel := h.ctx(r)
+	ctx, cancel := s.ctx(r)
 	defer cancel()
-	res, err := h.dir.MembersOf(ctx, dn, nested)
+	res, err := sess.Dir.MembersOf(ctx, dn, nested)
 	respond(w, res, err)
 }
 
-func (h *handler) ctx(r *http.Request) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(r.Context(), h.timeout)
+func (s *Server) ctx(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), s.timeout)
 }
 
 // toEntryResponse renders attributes with objectClass first, then by name.
-func (h *handler) toEntryResponse(e *ldap.Entry) entryResponse {
+func (s *Server) toEntryResponse(e *ldap.Entry) entryResponse {
 	out := entryResponse{
 		DN:         e.DN,
 		Kind:       directory.KindOf(e.GetAttributeValues("objectClass")),
 		Attributes: make([]attribute, 0, len(e.Attributes)),
 	}
 	for _, a := range e.Attributes {
-		out.Attributes = append(out.Attributes, attribute{Name: a.Name, Values: h.render.Render(a.Name, a.ByteValues)})
+		out.Attributes = append(out.Attributes, attribute{Name: a.Name, Values: s.render.Render(a.Name, a.ByteValues)})
 	}
 	slices.SortFunc(out.Attributes, func(a, b attribute) int {
 		if ao, bo := strings.EqualFold(a.Name, "objectClass"), strings.EqualFold(b.Name, "objectClass"); ao != bo {
@@ -211,6 +208,10 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, ldapclient.ErrNotFound), ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject):
 		status = http.StatusNotFound
+	case errors.Is(err, errNotConnected):
+		status = http.StatusServiceUnavailable
+	case ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials):
+		status = http.StatusUnauthorized
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusGatewayTimeout
 	case ldap.IsErrorWithCode(err, ldap.LDAPResultFilterError), ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidDNSyntax):

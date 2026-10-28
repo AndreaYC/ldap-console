@@ -4,6 +4,7 @@ import { Tree } from './tree.js';
 import { renderEntry } from './entry.js';
 import { renderSearch } from './search.js';
 import { renderGroups } from './groups.js';
+import { renderConnect } from './connect.js';
 
 const main = document.getElementById('main');
 let info;
@@ -33,6 +34,7 @@ async function route() {
   const { view, params } = parseHash();
   for (const a of document.querySelectorAll('.views a')) a.classList.toggle('active', a.dataset.view === view);
 
+  if (view === 'connect' || !info.connected) return renderConnect(main, info);
   if (view === 'groups') return renderGroups(main);
   if (view === 'search') return renderSearch(main, params, info);
 
@@ -90,13 +92,19 @@ async function start() {
     main.replaceChildren(h('div', { class: 'page' }, errorBox(err)));
     return;
   }
+  window.addEventListener('hashchange', route);
+  if (!info.connected) {
+    document.querySelector('.views').hidden = true;
+    document.querySelector('.find').hidden = true;
+    return route();
+  }
   document.getElementById('conn').replaceChildren(...nodes(
     h('span', { class: 'pill' }, info.vendor || 'LDAP'),
     h('span', { class: 'mono', title: 'Server' }, info.url),
     h('span', { title: 'Bound as' }, '· ', info.bindDN || 'anonymous'),
-    info.readOnly ? h('span', { class: 'pill ro' }, 'read-only') : null));
+    info.readOnly ? h('span', { class: 'pill ro' }, 'read-only') : null,
+    h('a', { href: '#/connect', title: 'Connect to another server' }, 'Switch')));
   setupFind();
-  window.addEventListener('hashchange', route);
   route();
 }
 

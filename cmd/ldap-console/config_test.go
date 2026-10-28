@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,7 +24,6 @@ func TestParseFlagsRejectsInvalidSettings(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"missing url", nil, "-url is required"},
 		{"wrong scheme", []string{"-url", "http://dc01"}, "must look like"},
 		{"starttls on ldaps", []string{"-url", "ldaps://dc01:636", "-start-tls"}, "only applies"},
 		{"zero page size", []string{"-url", "ldap://dc01", "-page-size", "0"}, "page-size"},
@@ -52,25 +49,13 @@ func TestCheckLoopbackAcceptsLocalAddresses(t *testing.T) {
 	}
 }
 
-func TestTLSConfigUsesHostAsServerName(t *testing.T) {
-	c := config{URL: "ldaps://dc01.corp.local:636"}
-	tc, err := c.tlsConfig()
+func TestParseFlagsWithoutURLStartsOnConnectPage(t *testing.T) {
+	c, err := parseFlags([]string{"-insecure-skip-verify"}, noEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tc.ServerName != "dc01.corp.local" || tc.InsecureSkipVerify {
-		t.Errorf("tls = %+v", tc)
-	}
-}
-
-func TestTLSConfigRejectsCAFileWithoutCertificates(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(path, []byte("not a cert"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := config{URL: "ldaps://dc01:636", CAFile: path}.tlsConfig()
-	if err == nil || !strings.Contains(err.Error(), "no PEM certificates") {
-		t.Errorf("err = %v", err)
+	if c.URL != "" || !c.settings().InsecureSkipVerify {
+		t.Errorf("config = %+v", c)
 	}
 }
 
@@ -85,16 +70,6 @@ func TestParseFlagsAllowsCleartextOnlyWhenSafeOrExplicit(t *testing.T) {
 		if _, err := parseFlags(args, noEnv); err != nil {
 			t.Errorf("%v: %v", args, err)
 		}
-	}
-}
-
-func TestTLSConfigHandlesIPv6Literal(t *testing.T) {
-	tc, err := config{URL: "ldaps://[::1]:636"}.tlsConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tc.ServerName != "::1" {
-		t.Errorf("ServerName = %q, want ::1", tc.ServerName)
 	}
 }
 
