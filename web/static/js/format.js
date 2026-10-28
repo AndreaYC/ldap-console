@@ -14,15 +14,49 @@ export function splitDN(dn) {
   return out;
 }
 
-function unescapeValue(rdn) {
+const hexPair = /^[0-9a-fA-F]{2}$/;
+const utf8 = new TextEncoder();
+
+// unescapeValue decodes RFC 4514 escapes: "\," style (AD) and "\2C" style
+// (OpenLDAP), where consecutive hex pairs form one UTF-8 sequence
+// ("J\C3\BCrgen" -> "Jürgen"). Invalid UTF-8 becomes U+FFFD.
+export function unescapeValue(s) {
+  if (!s.includes('\\')) return s;
+  const bytes = [];
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < s.length) {
+      const pair = s.slice(i + 1, i + 3);
+      if (hexPair.test(pair)) {
+        bytes.push(parseInt(pair, 16));
+        i += 2;
+      } else {
+        bytes.push(...utf8.encode(s[++i]));
+      }
+      continue;
+    }
+    const cp = s.codePointAt(i);
+    if (cp > 0xffff) i++; // astral character: skip its low surrogate
+    bytes.push(...utf8.encode(String.fromCodePoint(cp)));
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+// valueOfRDN returns the decoded value of one RDN ("OU=R\26D" -> "R&D").
+function valueOfRDN(rdn) {
   const i = rdn.indexOf('=');
-  return (i < 0 ? rdn : rdn.slice(i + 1)).replace(/\\(.)/g, '$1');
+  return unescapeValue(i < 0 ? rdn : rdn.slice(i + 1));
+}
+
+// rdnValue returns the value of the first RDN ("CN=Alice,OU=x" -> "Alice").
+export function rdnValue(dn) {
+  return valueOfRDN(splitDN(dn)[0] || dn);
 }
 
 // containerPath is where an entry lives, top-down and without the domain:
 // "CN=x,OU=Teams,OU=Groups,DC=corp,DC=local" -> "Groups / Teams".
 export function containerPath(dn) {
-  return splitDN(dn).slice(1).filter((r) => !/^dc=/i.test(r)).map(unescapeValue).reverse().join(' / ');
+  return splitDN(dn).slice(1).filter((r) => !/^dc=/i.test(r)).map(valueOfRDN).reverse().join(' / ');
 }
 
 // hostOf returns the host of an ldap:// or ldaps:// URL.
