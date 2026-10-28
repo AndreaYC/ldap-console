@@ -83,6 +83,7 @@ func New(initial *session.Session, opts Options) *Server {
 	mux.HandleFunc("GET /api/info", s.handleInfo)
 	mux.HandleFunc("POST /api/connect", s.handleConnect)
 	mux.HandleFunc("POST /api/disconnect", s.handleDisconnect)
+	mux.HandleFunc("POST /api/check-login", s.withSession(s.handleCheckLogin))
 	mux.HandleFunc("GET /api/children", s.withSession(s.handleChildren))
 	mux.HandleFunc("GET /api/entry", s.withSession(s.handleEntry))
 	mux.HandleFunc("GET /api/search", s.withSession(s.handleSearch))
@@ -146,9 +147,9 @@ func onlyHosts(allowed map[string]bool, next http.Handler) http.Handler {
 	})
 }
 
-// postPaths are the only endpoints that accept POST. They change which
-// server the console talks to; nothing changes the directory itself.
-var postPaths = map[string]bool{"/api/connect": true, "/api/disconnect": true}
+// postPaths are the only endpoints that accept POST: they carry passwords or
+// change which server the console talks to. None changes the directory.
+var postPaths = map[string]bool{"/api/connect": true, "/api/disconnect": true, "/api/check-login": true}
 
 // guardWrites lets GET and HEAD through. A POST must go to one of postPaths
 // and come from this console's own page: same Origin, a JSON body (which a

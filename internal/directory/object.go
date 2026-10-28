@@ -54,6 +54,16 @@ type Object struct {
 	Description string `json:"description,omitempty"`
 	GroupType   string `json:"groupType,omitempty"`
 	Disabled    bool   `json:"disabled,omitempty"`
+	// Members is set only by Groups.
+	Members *MemberCount `json:"members,omitempty"`
+}
+
+// MemberCount is a group's number of direct member values. More means the
+// server sent only the first range of them (AD: 1500), so Count is a lower
+// bound. Members through AD's primaryGroupID are never listed and not counted.
+type MemberCount struct {
+	Count int  `json:"count"`
+	More  bool `json:"more,omitempty"`
 }
 
 // objectAttrs are fetched for every listed entry.

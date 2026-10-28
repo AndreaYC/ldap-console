@@ -1,4 +1,7 @@
 import { toCSV } from './csv.js';
+import { splitDN } from './format.js';
+
+export { splitDN };
 
 // Tiny DOM helpers. All text goes through textContent / text nodes, never
 // innerHTML: directory values are untrusted.
@@ -29,7 +32,9 @@ export function nodes(...items) {
   return items.flat(Infinity).filter((c) => c != null && c !== false);
 }
 
-export function kindBadge(kind) {
+// kindBadge labels an entry's kind; pass dn to tell a domain from an OU.
+export function kindBadge(kind, dn) {
+  if (kind === 'container' && /^dc=/i.test(dn || '')) return h('span', { class: 'kind container', title: 'domain' }, 'DC');
   return h('span', { class: `kind ${kind}`, title: kind }, kindLabels[kind] || '•');
 }
 
@@ -53,33 +58,21 @@ export function rdnValue(dn) {
   return (i < 0 ? first : first.slice(i + 1)).replace(/\\(.)/g, '$1');
 }
 
-// splitDN splits on unescaped commas.
-export function splitDN(dn) {
-  const out = [];
-  let cur = '';
-  for (let i = 0; i < dn.length; i++) {
-    const c = dn[i];
-    if (c === '\\' && i + 1 < dn.length) { cur += c + dn[++i]; continue; }
-    if (c === ',') { out.push(cur.trim()); cur = ''; continue; }
-    cur += c;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
-}
-
 export function copyButton(text) {
+  const icon = '⧉';
   const b = h('button', {
-    title: 'Copy',
+    type: 'button', class: 'icon-btn', title: 'Copy', 'aria-label': 'Copy',
     onclick: async () => {
       try {
         await navigator.clipboard.writeText(text);
-        b.textContent = 'Copied';
+        b.textContent = '✓';
       } catch {
-        b.textContent = 'Copy failed';
+        b.textContent = '✗';
+        b.title = 'Copy failed';
       }
-      setTimeout(() => { b.textContent = 'Copy'; }, 1200);
+      setTimeout(() => { b.textContent = icon; b.title = 'Copy'; }, 1200);
     },
-  }, 'Copy');
+  }, icon);
   return b;
 }
 

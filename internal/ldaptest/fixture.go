@@ -11,6 +11,8 @@ const (
 	BaseDN   = "DC=corp,DC=local"
 	BindDN   = "CN=svc-ldap,OU=Service,DC=corp,DC=local"
 	Password = "test-only-password"
+	// AlicePassword lets tests bind as Alice, as an application would.
+	AlicePassword = "alice-test-password"
 
 	AliceDN       = "CN=Alice,OU=Users,DC=corp,DC=local"
 	BobDN         = "CN=Bob,OU=Users,DC=corp,DC=local"
@@ -40,7 +42,7 @@ func CorpAD() Config {
 	user := func(dn, sam, rid, uac string) *Entry {
 		return NewEntry(dn,
 			"objectClass", "top", "objectClass", "person", "objectClass", "organizationalPerson", "objectClass", "user",
-			"cn", cnOf(dn), "sAMAccountName", sam, "userAccountControl", uac,
+			"cn", cnOf(dn), "sAMAccountName", sam, "mail", sam+"@corp.local", "userAccountControl", uac,
 			"primaryGroupID", "513", "objectSid", sidBytes(domainSID+"-"+rid))
 	}
 	group := func(dn, rid string, members ...string) *Entry {
@@ -80,7 +82,8 @@ func CorpAD() Config {
 		"supportedCapabilities", "1.2.840.113556.1.4.800",
 		"dnsHostName", "dc01.corp.local")
 
-	return Config{BindDN: BindDN, Password: Password, Entries: entries, RootDSE: root}
+	return Config{BindDN: BindDN, Password: Password, Entries: entries, RootDSE: root,
+		UserPasswords: map[string]string{AliceDN: AlicePassword}}
 }
 
 func linkMemberOf(entries []*Entry) {

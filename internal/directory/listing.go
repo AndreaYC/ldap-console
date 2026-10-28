@@ -72,12 +72,51 @@ func (s *Service) Groups(ctx context.Context, base string) (ListResult, error) {
 		base = s.base
 	}
 	res, err := s.dir.Search(ctx, ldapclient.Query{
-		Base: base, Scope: ldap.ScopeWholeSubtree, Filter: groupFilter, Attrs: objectAttrs, Limit: groupsLimit,
+		Base: base, Scope: ldap.ScopeWholeSubtree, Filter: groupFilter, Attrs: slices.Concat(objectAttrs, s.memberCountAttrs()), Limit: groupsLimit,
 	})
 	if err != nil {
 		return ListResult{}, err
 	}
-	return sortedByName(toList(res)), nil
+	out := toList(res)
+	for i, e := range res.Entries {
+		out.Items[i].Members = countMembers(e)
+	}
+	return sortedByName(out), nil
+}
+
+// memberAttrs hold a group's members in AD, groupOfNames, groupOfUniqueNames
+// and posixGroup.
+var memberAttrs = []string{"member", "uniqueMember", "memberUid"}
+
+// memberCountRange is how many member values AD sends per group for the
+// count; larger groups show as "100+". Without it a domain's group list
+// would carry every member DN of every group.
+const memberCountRange = "member;range=0-99"
+
+func (s *Service) memberCountAttrs() []string {
+	if s.isAD {
+		return []string{memberCountRange}
+	}
+	return memberAttrs // no ranged retrieval outside AD
+}
+
+// countMembers counts member values as sent. A group listing members in two
+// attributes (rfc2307bis: member DNs plus memberUid names) counts the larger.
+func countMembers(e *ldap.Entry) *MemberCount {
+	c := &MemberCount{}
+	for _, a := range e.Attributes {
+		name, spec, ranged := strings.Cut(a.Name, ";range=")
+		if !slices.ContainsFunc(memberAttrs, func(m string) bool { return strings.EqualFold(m, name) }) {
+			continue
+		}
+		if len(a.Values) > c.Count {
+			c.Count = len(a.Values)
+		}
+		if ranged && !strings.HasSuffix(spec, "-*") {
+			c.More = true
+		}
+	}
+	return c
 }
 
 func toList(res ldapclient.Result) ListResult {

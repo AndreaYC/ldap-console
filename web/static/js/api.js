@@ -37,6 +37,7 @@ export const api = {
   },
   connect: (settings) => post('/api/connect', settings),
   disconnect: () => post('/api/disconnect', {}),
+  checkLogin: (check) => post('/api/check-login', check),
   children: (dn) => get('/api/children', { dn }),
   entry: (dn) => get('/api/entry', { dn }),
   search: (params) => get('/api/search', params),

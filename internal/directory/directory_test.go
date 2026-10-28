@@ -362,3 +362,85 @@ func TestMembersToleratesMembersInOtherDomains(t *testing.T) {
 		}
 	}
 }
+
+func TestGroupsCountsDirectMembersOfEveryFlavour(t *testing.T) {
+	res, err := newService(t, openLDAP(), ldapBase, false).Groups(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, g := range res.Items {
+		if g.Members == nil {
+			t.Fatalf("%s: no member count", g.Name)
+		}
+		got[g.Name] = g.Members.Count
+	}
+	if got["devs"] != 1 || got["staff"] != 2 || got["unix"] != 1 {
+		t.Errorf("member counts = %v", got)
+	}
+}
+
+func TestGroupsMarksMemberCountAsLowerBoundWhenADRangesTheValues(t *testing.T) {
+	cfg := ldaptest.CorpAD()
+	cfg.RangeLimit = 10
+	for _, e := range cfg.Entries {
+		if e.DN == ldaptest.OpsDN {
+			for i := range 40 {
+				e.Attrs["member"] = append(e.Attrs["member"], fmt.Sprintf("CN=u%d,OU=Users,%s", i, ldaptest.BaseDN))
+			}
+		}
+	}
+	res, err := newService(t, cfg, ldaptest.BaseDN, true).Groups(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range res.Items {
+		switch g.Name {
+		case "Ops":
+			if g.Members == nil || g.Members.Count != 10 || !g.Members.More {
+				t.Errorf("Ops members = %+v, want 10 and more", g.Members)
+			}
+		case "AllStaff":
+			if g.Members == nil || g.Members.Count != 2 || g.Members.More {
+				t.Errorf("AllStaff members = %+v, want exactly 2", g.Members)
+			}
+		}
+	}
+}
+
+func TestGroupsAsksADForOnlyTheFirstHundredMembers(t *testing.T) {
+	cfg := ldaptest.CorpAD()
+	for _, e := range cfg.Entries {
+		if e.DN == ldaptest.OpsDN {
+			for i := range 150 {
+				e.Attrs["member"] = append(e.Attrs["member"], fmt.Sprintf("CN=u%d,OU=Users,%s", i, ldaptest.BaseDN))
+			}
+		}
+	}
+	res, err := newService(t, cfg, ldaptest.BaseDN, true).Groups(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range res.Items {
+		if g.Name == "Ops" && (g.Members == nil || g.Members.Count != 100 || !g.Members.More) {
+			t.Errorf("Ops members = %+v, want 100 and more", g.Members)
+		}
+	}
+}
+
+func TestGroupsCountsAGroupListingMembersTwiceOnlyOnce(t *testing.T) {
+	cfg := openLDAP()
+	cfg.Entries = append(cfg.Entries, ldaptest.NewEntry("cn=bis,ou=groups,"+ldapBase,
+		"objectClass", "groupOfNames", "objectClass", "posixGroup", "cn", "bis",
+		"member", "uid=dave,ou=people,"+ldapBase, "member", "uid=erin,ou=people,"+ldapBase,
+		"memberUid", "dave", "memberUid", "erin"))
+	res, err := newService(t, cfg, ldapBase, false).Groups(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range res.Items {
+		if g.Name == "bis" && (g.Members == nil || g.Members.Count != 2) {
+			t.Errorf("bis members = %+v, want 2", g.Members)
+		}
+	}
+}

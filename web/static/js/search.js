@@ -12,14 +12,36 @@ const presets = [
   ['OpenLDAP people', '(objectClass=inetOrgPerson)'],
 ];
 
-function resultCard(e) {
-  const rows = e.attributes.map((a) => h('tr', null,
-    h('td', { class: 'attr-name' }, a.name),
-    h('td', null, a.values.map((v) => h('div', { class: 'val' + (v.binary ? ' bin' : '') },
-      v.dn ? entryLink(v.text) : v.text, v.note ? h('span', { class: 'note' }, v.note) : null)))));
-  return h('div', { class: 'result' },
-    h('div', { class: 'title' }, kindBadge(e.kind), entryLink(e.dn, rdnValue(e.dn)), h('span', { class: 'mono muted' }, e.dn)),
-    rows.length ? h('table', null, h('tbody', null, rows)) : null);
+function valueNode(v) {
+  return h('div', { class: 'val' + (v.binary ? ' bin' : '') },
+    v.dn ? entryLink(v.text, rdnValue(v.text)) : v.text, v.note ? h('span', { class: 'note' }, v.note) : null);
+}
+
+// columnsOf keeps the order the attributes were asked for, then adds any
+// others the server returned (e.g. for an empty attribute list).
+function columnsOf(entries, requested) {
+  const lower = new Map();
+  for (const n of requested) if (n && n !== '*' && n !== '+') lower.set(n.toLowerCase(), null);
+  for (const e of entries) {
+    for (const a of e.attributes) {
+      const k = a.name.toLowerCase();
+      if (!lower.get(k)) lower.set(k, a.name);
+    }
+  }
+  return [...lower.entries()].filter(([, name]) => name).map(([k, name]) => ({ key: k, name }));
+}
+
+function resultsTable(entries, requested) {
+  const cols = columnsOf(entries, requested);
+  const rows = entries.map((e) => {
+    const byName = new Map(e.attributes.map((a) => [a.name.toLowerCase(), a]));
+    return h('tr', null,
+      h('td', { class: 'nowrap' }, h('span', { class: 'namecell' }, kindBadge(e.kind, e.dn), entryLink(e.dn, rdnValue(e.dn)))),
+      cols.map((c) => h('td', null, (byName.get(c.key)?.values || []).map(valueNode))));
+  });
+  return h('div', { class: 'table-scroll' }, h('table', { 'aria-label': 'Search results' },
+    h('thead', null, h('tr', null, h('th', null, 'Entry'), cols.map((c) => h('th', { class: 'mono' }, c.name)))),
+    h('tbody', null, rows)));
 }
 
 // renderSearch draws the raw LDAP search form; state lives in the URL hash.
@@ -29,7 +51,7 @@ export function renderSearch(el, params, info) {
   const attrs = h('input', { value: params.get('attrs') || 'cn,sAMAccountName,mail,memberOf', placeholder: 'cn,mail (empty = all)', 'aria-label': 'Attributes', class: 'mono' });
   const scope = h('select', { 'aria-label': 'Scope' },
     ['sub', 'one', 'base'].map((s) => h('option', { value: s, selected: (params.get('scope') || 'sub') === s }, s)));
-  const limit = h('input', { type: 'number', min: 1, max: 10000, value: params.get('limit') || '500', 'aria-label': 'Limit' });
+  const limit = h('input', { type: 'number', min: 1, max: 10000, value: params.get('limit') || '500', id: 'search-limit', class: 'limit' });
   const out = h('div');
 
   const submit = (ev) => {
@@ -39,12 +61,14 @@ export function renderSearch(el, params, info) {
   };
 
   const form = h('form', { class: 'form', onsubmit: submit },
+    h('label', null, 'Presets'), h('div', { class: 'presets' }, presets.map(([label, f]) =>
+      h('button', { type: 'button', onclick: () => { filter.value = f; submit(); } }, label))),
     h('label', null, 'Base DN'), base,
     h('label', null, 'Filter'), filter,
     h('label', null, 'Attributes'), attrs,
-    h('label', null, 'Scope'), h('div', { class: 'row' }, scope, limit, h('button', { class: 'primary', type: 'submit' }, 'Search')),
-    h('label', null, 'Presets'), h('div', { class: 'presets' }, presets.map(([label, f]) =>
-      h('button', { type: 'button', onclick: () => { filter.value = f; submit(); } }, label))));
+    h('label', null, 'Scope'), h('div', { class: 'row' }, scope,
+      h('label', { for: 'search-limit', class: 'muted' }, 'Max results'), limit,
+      h('span', { class: 'spacer' }), h('button', { class: 'primary', type: 'submit' }, 'Search')));
 
   el.replaceChildren(h('div', { class: 'page' }, form, out));
   if (params.get('filter')) run(out, Object.fromEntries(params));
@@ -65,7 +89,8 @@ async function run(out, params) {
       h('div', { class: 'toolbar' }, h('b', null, `${res.entries.length} entries`),
         res.truncated ? h('span', { class: 'muted' }, '(limit reached — narrow the filter or raise the limit)') : null,
         h('span', { class: 'spacer' }), exportBtn),
-      res.entries.length ? res.entries.map(resultCard) : h('div', { class: 'empty' }, 'No entries match')));
+      res.entries.length ? resultsTable(res.entries, (params.attrs || '').split(',').map((a) => a.trim()))
+        : h('div', { class: 'empty' }, 'No entries match')));
   } catch (err) {
     out.replaceChildren(errorBox(err));
   }

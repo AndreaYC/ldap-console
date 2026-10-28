@@ -17,7 +17,7 @@ import (
 
 const testHost = "127.0.0.1:8389"
 
-func newTestHandler(t *testing.T) http.Handler {
+func newTestHandler(t *testing.T) *Server {
 	t.Helper()
 	srv := ldaptest.Start(t, ldaptest.CorpAD())
 	sess, err := session.Open(context.Background(), session.Settings{URL: srv.URL, BindDN: ldaptest.BindDN}, ldaptest.Password)

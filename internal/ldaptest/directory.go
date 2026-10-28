@@ -94,13 +94,16 @@ func (e *Entry) selectAttrs(requested []string, rangeLimit int) map[string][]str
 
 // rangeSlice serves one window of a ranged attribute: "low-*" or "low-high".
 func rangeSlice(name string, vals []string, spec string, limit int) (string, []string) {
-	low := 0
+	low, high := 0, len(vals)
 	if spec != "" {
-		l, _, _ := strings.Cut(spec, "-")
+		l, h, _ := strings.Cut(spec, "-")
 		low, _ = strconv.Atoi(l)
+		if n, err := strconv.Atoi(h); err == nil {
+			high = min(high, n+1)
+		}
 	}
 	low = min(low, len(vals))
-	high := len(vals)
+	high = max(high, low)
 	if limit > 0 {
 		high = min(high, low+limit)
 	}

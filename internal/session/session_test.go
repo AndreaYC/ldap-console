@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +110,41 @@ func TestProfileRoundTripsPrivatelyWithoutPassword(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(path); strings.Contains(strings.ToLower(string(b)), "password") || strings.Contains(string(b), "insecure") {
 		t.Errorf("profile file holds more than connection settings: %s", b)
+	}
+}
+
+func TestVerifyBindChecksUserPasswordOnItsOwnConnection(t *testing.T) {
+	srv := ldaptest.Start(t, ldaptest.CorpAD())
+	s := Settings{URL: srv.URL, BindDN: ldaptest.BindDN}
+	if err := VerifyBind(context.Background(), s, ldaptest.AliceDN, ldaptest.AlicePassword); err != nil {
+		t.Errorf("right password: %v", err)
+	}
+	if err := VerifyBind(context.Background(), s, ldaptest.AliceDN, "wrong"); err == nil {
+		t.Error("wrong password accepted")
+	}
+}
+
+// AD accepts a simple bind with an empty password as anonymous, so it would
+// "succeed" for any user.
+func TestVerifyBindRefusesEmptyPassword(t *testing.T) {
+	err := VerifyBind(context.Background(), Settings{URL: "ldap://127.0.0.1:1"}, ldaptest.AliceDN, "")
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestExplainBindErrorDecodesADSubcodes(t *testing.T) {
+	ad := func(code string) error {
+		return fmt.Errorf(`LDAP Result Code 49 "Invalid Credentials": 80090308: LdapErr: DSID-0C09041C, comment: AcceptSecurityContext error, data %s, v4563`, code)
+	}
+	for code, want := range map[string]string{
+		"52e": "wrong password", "533": "disabled", "775": "locked", "532": "expired", "773": "must change",
+	} {
+		if got := explainBindError(ad(code)); !strings.Contains(got, want) {
+			t.Errorf("data %s: %q, want containing %q", code, got, want)
+		}
+	}
+	if got := explainBindError(errors.New("network down")); got != "network down" {
+		t.Errorf("non-AD error rewritten: %q", got)
 	}
 }

@@ -63,7 +63,8 @@ To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow t
 - **Browse**: a lazily loaded DIT tree, plus each entry's attributes with AD values decoded: `objectSid`, `objectGUID`, FILETIME timestamps, `userAccountControl` flags and `groupType`.
 - **Member of** (users, computers, groups): every group the account belongs to, marked *direct*, *nested* (with the chain of groups that grants it), or *primary* (AD `primaryGroupID`, which `memberOf` never lists).
 - **Members** (groups): direct members, or with *Include nested* the members of sub-groups too, each with its path. Disabled accounts are flagged.
-- **Groups**: every group with its type and OU. You can filter it and export it to CSV.
+- **Groups**: every group with its direct member count (on AD, "100+" above 100), type and OU. You can filter it and export it to CSV.
+- **Login test**: checks an application's LDAP login settings before you save them there. It replays the login for one user step by step: find the user with the user filter (exactly one must match), optionally sign in with their password, then find their groups. Modes: *Generic* (`{username}` / `{dn}` placeholders; `%s` and `%[1]s` also work), *Gitea* (filled with `%[1]s` exactly as Gitea does; user, admin and restricted filters, email attribute, group verification), and *Open WebUI* (username attribute plus search filters, mail attribute, `memberOf` groups; like Open WebUI, several matches log in as the first). The password is used for one bind on a separate connection and never stored. AD's bind error codes are spelled out (wrong password, disabled, locked, expired…).
 - **Search**: raw LDAP filters with presets (disabled users, locked out, password never expires, empty groups, …). Results export to CSV.
 
 ## Behaviour on large directories
@@ -75,7 +76,7 @@ To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow t
 
 ## Security
 
-- Read-only towards the directory. The only POST endpoints are connect and disconnect, and they accept a request only when all three checks pass: the `Origin` is the console itself, the body is JSON, and the request carries a token generated at each launch. A malicious page open in the same browser therefore can't point the console at a server it controls.
+- Read-only towards the directory. The only POST endpoints are connect, disconnect and login test (it carries a password), and they accept a request only when all three checks pass: the `Origin` is the console itself, the body is JSON, and the request carries a token generated at each launch. A malicious page open in the same browser therefore can't point the console at a server it controls.
 - The UI listens only on loopback (in Docker: published on `127.0.0.1` only), and requests are refused if their `Host` header isn't a local name (this blocks DNS-rebinding attacks).
 - Strict CSP. Directory values are only rendered as text, never as HTML.
 - User input is escaped before it goes into filters. Raw filters from the Search view are compiled and checked before they're sent.
