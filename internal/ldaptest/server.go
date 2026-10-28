@@ -30,8 +30,11 @@ type Server struct {
 // Config describes the fake directory.
 type Config struct {
 	BindDN, Password string
-	Entries          []*Entry
-	RootDSE          *Entry
+	// UserPasswords lets these DNs bind too, as applications bind as the
+	// user logging in.
+	UserPasswords map[string]string
+	Entries       []*Entry
+	RootDSE       *Entry
 	// RangeLimit caps values per multi-valued attribute (AD uses 1500). 0 = unlimited.
 	RangeLimit int
 	// MaxPageSize caps entries per page regardless of the client's request.
@@ -105,7 +108,8 @@ func (s *Server) handleBind(w *gldap.ResponseWriter, r *gldap.Request) {
 	if err != nil {
 		return
 	}
-	if m.UserName == s.cfg.BindDN && string(m.Password) == s.cfg.Password {
+	pw, isUser := s.cfg.UserPasswords[m.UserName]
+	if (m.UserName == s.cfg.BindDN && string(m.Password) == s.cfg.Password) || (isUser && string(m.Password) == pw) {
 		s.mu.Lock()
 		s.bound[r.ConnectionID()] = true
 		s.mu.Unlock()

@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue } from './dom.js';
+import { plural } from './format.js';
 
 function tags(m) {
   return [
@@ -27,7 +28,7 @@ function stats(items) {
     h('span', null, h('b', null, items.length), ' total'),
     h('span', null, h('b', null, direct), ' direct'),
     h('span', null, h('b', null, items.length - direct), ' nested'),
-    Object.entries(byKind).map(([k, n]) => h('span', null, h('b', null, n), ' ', k)));
+    Object.entries(byKind).map(([k, n]) => h('span', null, h('b', null, n), ' ', plural(n, k).replace(/^\d+ /, ''))));
 }
 
 // membershipTable renders a filterable list of memberships with CSV export.
@@ -91,10 +92,10 @@ export async function renderMemberOf(el, dn) {
 }
 
 export async function renderMembers(el, dn) {
-  const nested = h('input', { type: 'checkbox', id: 'nested', name: 'nested' });
+  const nested = h('input', { type: 'checkbox', id: 'nested', name: 'nested', checked: true });
   const body = h('div');
   const head = h('div', { class: 'toolbar' },
-    h('label', { for: 'nested' }, nested, ' Include nested members (expand sub-groups)'));
+    h('label', { for: 'nested' }, nested, ' Include nested members (people in sub-groups too)'));
   el.replaceChildren(head, body);
 
   const load = async () => {

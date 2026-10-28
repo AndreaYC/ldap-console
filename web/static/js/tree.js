@@ -16,7 +16,7 @@ export class Tree {
   #node(obj) {
     const caret = h('span', { class: 'caret' }, obj.kind === 'container' ? '▶' : '');
     const row = h('div', { class: 'node', title: obj.dn },
-      caret, kindBadge(obj.kind), h('span', { class: 'name' }, obj.name || rdnValue(obj.dn)),
+      caret, kindBadge(obj.kind, obj.dn), h('span', { class: 'name' }, obj.name || rdnValue(obj.dn)),
       obj.disabled ? h('span', { class: 'tag disabled' }, 'disabled') : null);
     const li = h('li', null, row);
     const state = { obj, li, row, caret, children: null, open: false };

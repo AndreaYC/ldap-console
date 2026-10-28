@@ -26,7 +26,7 @@ test: ## Go tests with the race detector, plus JS unit tests when node is instal
 
 cover: ## Aggregate coverage of internal packages
 	@mkdir -p $(BIN)
-	go test -race -coverpkg=./internal/... -coverprofile=$(BIN)/cover.out ./...
+	go test -count=1 -race -coverpkg=./internal/... -coverprofile=$(BIN)/cover.out ./...
 	go tool cover -func=$(BIN)/cover.out | tail -1
 
 lint: ## gofmt check, go vet, and gosec when installed

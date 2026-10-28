@@ -88,10 +88,8 @@ func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
 // replaces the current one. The password is used for this bind only.
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var req connectRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, badRequest("invalid connect request: %v", err))
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, err)
 		return
 	}
 	settings := s.defaults
@@ -118,6 +116,16 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, s.info())
+}
+
+// decodeJSON reads a small JSON body, rejecting unknown fields.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return badRequest("invalid request: %v", err)
+	}
+	return nil
 }
 
 func (s *Server) handleDisconnect(w http.ResponseWriter, _ *http.Request) {

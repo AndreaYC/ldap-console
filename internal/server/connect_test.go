@@ -155,3 +155,29 @@ func TestInfoFillsUnsavedFieldsFromLaunchDefaults(t *testing.T) {
 		t.Errorf("profile = %+v, want saved URL and default CA file", got)
 	}
 }
+
+func TestCheckLoginRunsAppLoginWithRealBind(t *testing.T) {
+	h := newTestHandler(t)
+	body := `{"app":"generic","username":"alice","password":"` + ldaptest.AlicePassword + `",
+		"userFilter":"(&(objectClass=user)(sAMAccountName={username}))"}`
+	got := decode[directory.LoginReport](t, post(t, h, "/api/check-login", body), http.StatusOK)
+	if len(got.Steps) < 2 || got.Steps[0].Status != directory.StatusOK || got.Steps[1].Status != directory.StatusOK {
+		t.Errorf("steps = %+v", got.Steps)
+	}
+}
+
+func TestCheckLoginRejectsInvalidRequests(t *testing.T) {
+	h := newTestHandler(t)
+	for name, body := range map[string]string{
+		"no username": `{"app":"generic","userFilter":"(uid={username})"}`,
+		"unknown app": `{"app":"jenkins","username":"alice"}`,
+		"bad base":    `{"app":"generic","username":"alice","userBase":"not a dn"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			decode[errorResponse](t, post(t, h, "/api/check-login", body), http.StatusBadRequest)
+		})
+	}
+	if rec := post(t, h, "/api/check-login", `{"app":"generic","username":"alice"}`, withHeader("X-Console-Token", "")); rec.Code != http.StatusForbidden {
+		t.Errorf("without token: %d, want 403", rec.Code)
+	}
+}

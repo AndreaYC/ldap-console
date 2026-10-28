@@ -45,7 +45,8 @@ export async function renderEntry(el, dn, tab) {
   const tabs = [['attributes', 'Attributes']];
   if (membershipKinds.has(entry.kind)) tabs.push(['memberof', 'Member of']);
   if (entry.kind === 'group') tabs.push(['members', 'Members']);
-  if (!tabs.some(([id]) => id === tab)) tab = 'attributes';
+  // Membership is what people open an account or a group for; Attributes stays one click away.
+  if (!tabs.some(([id]) => id === tab)) tab = entry.kind === 'group' ? 'members' : membershipKinds.has(entry.kind) ? 'memberof' : 'attributes';
 
   const body = h('div');
   const bar = h('div', { class: 'tabs', role: 'tablist' });
@@ -63,7 +64,7 @@ export async function renderEntry(el, dn, tab) {
   }
 
   el.replaceChildren(
-    h('div', { class: 'head' }, kindBadge(entry.kind), h('h1', null, name)),
+    h('div', { class: 'head' }, kindBadge(entry.kind, entry.dn), h('h1', null, name)),
     h('div', { class: 'dnline' }, h('span', { class: 'mono' }, entry.dn), copyButton(entry.dn)),
     bar, body);
   show(tab);

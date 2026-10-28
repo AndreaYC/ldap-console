@@ -1,10 +1,19 @@
 import { api } from './api.js';
 import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, splitDN } from './dom.js';
+import { containerPath } from './format.js';
 
-// container returns the parent path of a DN, e.g. "OU=Groups,DC=corp,DC=local".
+// container returns the parent DN, e.g. "OU=Groups,DC=corp,DC=local".
 function container(dn) {
   return splitDN(dn).slice(1).join(',');
 }
+
+// memberCount shows "100+" when AD was asked for only the first 100 members.
+function memberCount(g) {
+  if (!g.members) return '';
+  return g.members.count + (g.members.more ? '+' : '');
+}
+
+const countHint = 'Direct members; on AD, 100+ means more than 100. Members through the AD primary group (e.g. Domain Users) are not counted.';
 
 // renderGroups lists every group with type and location, filterable.
 export async function renderGroups(el) {
@@ -33,24 +42,25 @@ export async function renderGroups(el) {
       (!q || g.name.toLowerCase().includes(q) || (g.description || '').toLowerCase().includes(q) || g.dn.toLowerCase().includes(q)));
     count.textContent = `${rows.length} of ${res.items.length} groups`;
     tbody.replaceChildren(...rows.map((g) => h('tr', null,
-      h('td', null, h('span', { class: 'namecell' }, kindBadge(g.kind), entryLink(g.dn + '', g.name))),
+      h('td', null, h('span', { class: 'namecell' }, kindBadge(g.kind), entryLink(g.dn, g.name))),
+      h('td', { class: 'num' + (g.members?.count ? '' : ' muted') }, memberCount(g)),
       h('td', { class: 'muted' }, g.groupType || ''),
       h('td', null, g.description || ''),
-      h('td', { class: 'mono muted' }, container(g.dn)))));
+      h('td', { class: 'muted', title: container(g.dn) }, containerPath(g.dn) || '(domain root)'))));
   };
   filter.addEventListener('input', render);
   typeSel.addEventListener('change', render);
 
   const exportBtn = h('button', {
-    onclick: () => downloadCSV('groups.csv', ['name', 'groupType', 'description', 'container', 'dn'],
-      res.items.map((g) => [g.name, g.groupType || '', g.description || '', container(g.dn), g.dn])),
+    onclick: () => downloadCSV('groups.csv', ['name', 'members', 'groupType', 'description', 'container', 'dn'],
+      res.items.map((g) => [g.name, memberCount(g), g.groupType || '', g.description || '', container(g.dn), g.dn])),
   }, 'Export CSV');
 
   page.replaceChildren(...nodes(
     h('div', { class: 'toolbar' }, filter, typeSel, count, h('span', { class: 'spacer' }), exportBtn),
     res.truncated ? h('div', { class: 'notice' }, 'List truncated at the safety limit.') : null,
-    h('table', { 'aria-label': 'Groups' },
-      h('thead', null, h('tr', null, h('th', null, 'Group'), h('th', null, 'Type'), h('th', null, 'Description'), h('th', null, 'Container'))),
-      tbody)));
+    h('div', { class: 'table-scroll' }, h('table', { 'aria-label': 'Groups' },
+      h('thead', null, h('tr', null, h('th', null, 'Group'), h('th', { class: 'num', title: countHint }, 'Members'), h('th', null, 'Type'), h('th', null, 'Description'), h('th', null, 'Container'))),
+      tbody))));
   render();
 }

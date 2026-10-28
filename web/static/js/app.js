@@ -5,6 +5,8 @@ import { renderEntry } from './entry.js';
 import { renderSearch } from './search.js';
 import { renderGroups } from './groups.js';
 import { renderConnect } from './connect.js';
+import { renderLoginTest } from './logintest.js';
+import { hostOf } from './format.js';
 
 const main = document.getElementById('main');
 let info;
@@ -36,6 +38,7 @@ async function route() {
 
   if (view === 'connect' || !info.connected) return renderConnect(main, info);
   if (view === 'groups') return renderGroups(main);
+  if (view === 'test') return renderLoginTest(main, info);
   if (view === 'search') return renderSearch(main, params, info);
 
   const b = ensureBrowse();
@@ -61,7 +64,7 @@ function setupFind() {
     try {
       const res = await api.find(q);
       rows = res.items.map((o) => h('div', { class: 'row', onmousedown: () => go(o.dn), title: o.dn },
-        kindBadge(o.kind), h('span', null, o.name), h('span', { class: 'muted mono find-dn' }, o.dn.split(',').slice(1, 3).join(','))));
+        kindBadge(o.kind, o.dn), h('span', null, o.name), h('span', { class: 'muted mono find-dn' }, o.dn.split(',').slice(1, 3).join(','))));
       box.replaceChildren(...(rows.length ? rows : [h('div', { class: 'row muted' }, 'No matches')]));
       sel = -1;
       box.hidden = false;
@@ -85,6 +88,27 @@ function setupFind() {
   });
 }
 
+// renderConn shows the server as a small chip; the details (bind DN, base,
+// Switch) open in a panel so the header keeps room for the find box.
+function renderConn(el) {
+  const row = (label, value, mono) => h('div', { class: 'conn-row' },
+    h('span', { class: 'muted' }, label), h('span', { class: mono ? 'mono' : null }, value));
+  el.replaceChildren(
+    h('summary', { title: info.url },
+      h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'conn-host' }, hostOf(info.url)), h('span', { class: 'caret-down', 'aria-hidden': 'true' }, '▾')),
+    h('div', { class: 'conn-panel' }, ...nodes(
+      row('Server', info.url, true),
+      row('Bound as', info.bindDN || 'anonymous', true),
+      row('Base DN', info.baseDN, true),
+      h('div', { class: 'conn-row' }, h('span', { class: 'pill' }, info.vendor || 'LDAP'),
+        info.readOnly ? h('span', { class: 'pill ro' }, 'read-only') : null),
+      h('div', { class: 'conn-actions' }, h('a', { href: '#/connect', class: 'button', onclick: () => { el.open = false; } }, 'Switch server…')))));
+  el.hidden = false;
+  document.addEventListener('click', (ev) => { if (el.open && !el.contains(ev.target)) el.open = false; });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') el.open = false; });
+  window.addEventListener('hashchange', () => { el.open = false; });
+}
+
 async function start() {
   try {
     info = await api.info();
@@ -98,12 +122,7 @@ async function start() {
     document.querySelector('.find').hidden = true;
     return route();
   }
-  document.getElementById('conn').replaceChildren(...nodes(
-    h('span', { class: 'pill' }, info.vendor || 'LDAP'),
-    h('span', { class: 'mono', title: 'Server' }, info.url),
-    h('span', { title: 'Bound as' }, '· ', info.bindDN || 'anonymous'),
-    info.readOnly ? h('span', { class: 'pill ro' }, 'read-only') : null,
-    h('a', { href: '#/connect', title: 'Connect to another server' }, 'Switch')));
+  renderConn(document.getElementById('conn'));
   setupFind();
   route();
 }
