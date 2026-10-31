@@ -85,7 +85,8 @@ func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleConnect opens a session from the connect page and, once it works,
-// replaces the current one. The password is used for this bind only.
+// replaces the current one. The password is never written to disk; it stays
+// in memory with the session so the client can rebind after a reconnect.
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var req connectRequest
 	if err := decodeJSON(w, r, &req); err != nil {
