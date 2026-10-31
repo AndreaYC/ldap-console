@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/AndreaYC/ldap-console/internal/directory"
 	"github.com/AndreaYC/ldap-console/internal/ldapclient"
 	"github.com/go-ldap/ldap/v3"
 )
@@ -63,6 +64,37 @@ func dnParam(r *http.Request, name string) (string, error) {
 		return "", badRequest("%s is not a valid DN: %q", name, dn)
 	}
 	return dn, nil
+}
+
+const maxNameLen = 256
+
+// bulkNames reads the repeated name parameter: trimmed, blanks dropped,
+// duplicates (ignoring case) removed, order kept.
+func bulkNames(r *http.Request) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range r.URL.Query()["name"] {
+		n = strings.TrimSpace(n)
+		key := strings.ToLower(n)
+		if n == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		switch {
+		case len(n) > maxNameLen:
+			return nil, badRequest("name %.40q… is longer than %d characters", n, maxNameLen)
+		case strings.HasPrefix(n, "("):
+			return nil, badRequest("%q looks like a filter; enter login names, e-mail addresses or DNs", n)
+		}
+		out = append(out, n)
+	}
+	switch {
+	case len(out) == 0:
+		return nil, badRequest("enter at least one name")
+	case len(out) > directory.MaxBulkNames:
+		return nil, badRequest("%d names; look up at most %d at a time", len(out), directory.MaxBulkNames)
+	}
+	return out, nil
 }
 
 func parseSearch(r *http.Request, defaultBase string) (ldapclient.Query, error) {
