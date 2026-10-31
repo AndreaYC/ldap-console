@@ -11,9 +11,17 @@ import (
 
 // VerifyBind checks dn's password the way an application does at login:
 // a bind on a fresh connection to the same server, closed straight after.
+//
+// The console's own settings were validated for the console's bind, which
+// may be anonymous and so allowed over plain ldap://. This bind sends a real
+// user's password, so the cleartext policy is checked again for it.
 func VerifyBind(ctx context.Context, s Settings, dn, password string) error {
 	if password == "" {
 		return errors.New("refusing an empty password: AD treats it as an anonymous bind and reports success for any user")
+	}
+	s.BindDN = dn
+	if err := s.Validate(); err != nil {
+		return err
 	}
 	tlsCfg, err := s.TLSConfig()
 	if err != nil {
