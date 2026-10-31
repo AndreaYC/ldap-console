@@ -36,11 +36,16 @@ function groupPicker(list, groupsReady, datalistId, onChange) {
         onclick: () => { list.splice(i, 1); draw(); onChange(); } }, '×'))));
   };
 
+  // Enter fires both keydown and change; the second call sees the value
+  // already taken and returns.
+  let pending = '';
   const add = async () => {
     const v = input.value.trim();
+    if (!v || v === pending) return;
     msg.textContent = '';
-    if (!v) return;
+    pending = v;
     const groups = await groupsReady;
+    pending = '';
     const lower = v.toLowerCase();
     let dn = groups.find((g) => g.dn.toLowerCase() === lower)?.dn;
     if (!dn) {
