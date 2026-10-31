@@ -300,3 +300,27 @@ table.pivot th:first-child, table.pivot td:first-child { width: 28px; padding-ri
 .check-field { margin-bottom: 10px; }
 .check-field .check { margin-bottom: 0; }
 .check-field .hint { display: block; margin-left: 22px; }
+
+/* why (not)? */
+.explain-panel { margin-top: 10px; }
+.explain-panel .toolbar input { flex: 1; min-width: 200px; max-width: 360px; }
+.search-explain { max-width: 900px; margin-bottom: 14px; }
+.explain .summary { margin-top: 6px; }
+.explain-who { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; word-break: break-all; }
+.explain-reasons { margin: 6px 0 8px; }
+.explain-reasons ul { margin: 4px 0 0; padding-left: 20px; }
+.explain-tree summary { cursor: pointer; color: var(--muted); margin-bottom: 4px; }
+.explain-tree ul { list-style: none; margin: 0; padding-left: 18px; }
+.explain-tree > ul { padding-left: 0; }
+.explain-row { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; padding: 1px 0; }
+.explain-node > .explain-row .mark { width: 14px; font-weight: 700; flex: none; }
+.explain-node.ok > .explain-row .mark { color: var(--k-computer); }
+.explain-node.fail > .explain-row .mark { color: var(--danger); }
+.explain-filter { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
+.explain-values { font-size: 11px; margin-left: 20px; word-break: break-all; }
+.explain-tree .hint { margin-top: 6px; word-break: break-all; }
+.step-why { margin: 6px 0 0 26px; }
+.link-btn { border: 0; background: none; color: var(--accent); padding: 2px 0; margin: 4px 0 0 26px; font-size: 12px; }
+.link-btn:hover { background: none; text-decoration: underline; }
+.explain-hint { font-size: 12px; margin: 2px 0 2px 20px; color: var(--accent); word-break: break-all; }
+.explain-reasons .explain-hint { margin-left: 0; }

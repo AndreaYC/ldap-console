@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, term } from './dom.js';
+import { explainPanel } from './explain.js';
 
 const presets = [
   ['All users', '(&(objectCategory=person)(objectClass=user))'],
@@ -71,7 +72,9 @@ export function renderSearch(el, params, info) {
       h('label', { for: 'search-limit', class: 'muted' }, 'Max results'), limit,
       h('span', { class: 'spacer' }), h('button', { class: 'primary', type: 'submit' }, 'Search')));
 
-  el.replaceChildren(h('div', { class: 'page' }, form, out));
+  const check = explainPanel(() => ({ filter: filter.value.trim(), base: base.value.trim() }),
+    { label: 'Why is someone (not) in the results?' });
+  el.replaceChildren(h('div', { class: 'page' }, form, h('div', { class: 'search-explain' }, check), out));
   if (params.get('filter')) run(out, Object.fromEntries(params));
 }
 

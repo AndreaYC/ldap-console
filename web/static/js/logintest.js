@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, claim, term, plainTerm } from './dom.js';
 import { loginSummary } from './format.js';
+import { runExplain } from './explain.js';
 
 // Field sets per application: [key, label, hint, AD default, non-AD default].
 // A label is a glossary key, or [plain, the app's own setting name] so values
@@ -67,16 +68,36 @@ export function prefillLoginTest(app, values) {
   save(app, { ...loadSaved(app), ...values });
 }
 
-function renderStep(s) {
+// Steps whose filter is tested against the user's own entry, so "why
+// (not)?" has an answer: finding the user, and Gitea's admin and
+// restricted filters.
+const explainable = new Set(['user', 'admin', 'restricted']);
+
+// whyBox explains a step's filter for the test user. A user search that
+// found nobody explains itself straight away: that is when people ask.
+function whyBox(s, username) {
+  if (!explainable.has(s.id) || !s.filter || !username || s.status === 'skipped') return null;
+  const box = h('div', { class: 'step-why' });
+  const run = () => runExplain(box, { who: username, filter: s.filter, base: s.base });
+  if (s.id === 'user' && s.status === 'fail' && !s.items?.length) {
+    run();
+    return box;
+  }
+  const btn = h('button', { type: 'button', class: 'link-btn', onclick: () => { btn.remove(); run(); } }, `Why? Check ${username} against these conditions`);
+  return h('div', null, btn, box);
+}
+
+function renderStep(s, username) {
   return h('div', { class: 'step ' + s.status },
     h('div', { class: 'step-head' }, h('span', { class: 'mark' }, statusMark[s.status] || '?'), h('b', null, s.title)),
     h('div', { class: 'step-msg' }, s.message),
     ...nodes(
-      s.filter ? h('div', { class: 'step-detail' }, h('span', { class: 'muted' }, 'Filter sent: '), h('code', null, s.filter), copyButton(s.filter)) : null,
-      s.base ? h('div', { class: 'step-detail muted' }, 'Base: ', h('span', { class: 'mono' }, s.base)) : null,
+      s.filter ? h('div', { class: 'step-detail' }, h('span', { class: 'muted' }, term('filter', 'Conditions sent'), ': '), h('code', null, s.filter), copyButton(s.filter)) : null,
+      s.base ? h('div', { class: 'step-detail muted' }, term('base'), ': ', h('span', { class: 'mono' }, s.base)) : null,
       s.items?.length ? h('ul', { class: 'step-items' }, s.items.map((o) =>
         h('li', null, kindBadge(o.kind), entryLink(o.dn, o.name), o.disabled ? h('span', { class: 'tag' }, 'disabled') : null))) : null,
-      s.truncated ? h('div', { class: 'notice' }, 'Only the first results are shown.') : null));
+      s.truncated ? h('div', { class: 'notice' }, 'Only the first results are shown.') : null,
+      whyBox(s, username)));
 }
 
 // renderLoginTest replays an application's LDAP login for one user.
@@ -111,12 +132,13 @@ export function renderLoginTest(el, info, params) {
     const label = apps[app].label;
     out.replaceChildren(loading('Testing…'));
     try {
-      const res = await api.checkLogin({ app, username: username.value.trim(), password: password.value, ...values });
+      const tested = username.value.trim();
+      const res = await api.checkLogin({ app, username: tested, password: password.value, ...values });
       if (!current()) return;
       const sum = loginSummary(res.steps, label);
       out.replaceChildren(
         h('div', { class: 'summary ' + sum.status }, h('span', { class: 'mark' }, statusMark[sum.status]), sum.text),
-        h('div', { class: 'steps' }, res.steps.map(renderStep)));
+        h('div', { class: 'steps' }, res.steps.map((s) => renderStep(s, tested))));
     } catch (err) {
       if (current()) out.replaceChildren(errorBox(err));
     }

@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue, claim, term, plainTerm } from './dom.js';
 import { buildSettings, defaultOptions, accountClasses, groupSchemas } from './filters.js';
 import { prefillLoginTest } from './logintest.js';
+import { explainPanel } from './explain.js';
 import { plural } from './format.js';
 
 const storageKey = 'ldap-console.filter-builder';
@@ -109,11 +110,15 @@ export async function renderBuilder(el, params, info) {
 
   const out = h('div', { class: 'builder-out' });
   const preview = h('div');
+  let current; // the settings shown now, for the person check
+  const personCheck = explainPanel(() => ({ filter: current.generic.userFilter, base: o.userBase || info.baseDN }),
+    { label: 'Why can or can\u2019t someone log in?' });
   const update = () => {
     saveOptions(o);
     claim(preview); // a running preview is for the old filter
     preview.replaceChildren();
     const s = buildSettings(o);
+    current = s;
     out.replaceChildren(...nodes(
       s.warnings.map((w) => h('div', { class: 'notice warn-text' }, '! ', w)),
       settingsCard('Generic', 'generic', [
@@ -131,7 +136,8 @@ export async function renderBuilder(el, params, info) {
         h('div', { class: 'card-head' }, h('b', null, 'Who could log in'), h('span', { class: 'spacer' }),
           h('button', { type: 'button', class: 'primary', onclick: () => runPreview(preview, s.preview, o, info) }, 'List matching accounts')),
         h('div', { class: 'setting' }, h('span', { class: 'muted' }, term('filter')), h('code', null, s.preview), copyButton(s.preview)),
-        preview)));
+        preview,
+        personCheck)));
   };
   const set = (k) => (ev) => { o[k] = ev.target.type === 'checkbox' ? ev.target.checked : ev.target.value.trim(); update(); };
 
