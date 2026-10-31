@@ -63,6 +63,8 @@ To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow t
 - **Browse**: a lazily loaded DIT tree, plus each entry's attributes with AD values decoded: `objectSid`, `objectGUID`, FILETIME timestamps, `userAccountControl` flags and `groupType`.
 - **Member of** (users, computers, groups): every group the account belongs to, marked *direct*, *nested* (with the chain of groups that grants it), or *primary* (AD `primaryGroupID`, which `memberOf` never lists).
 - **Members** (groups): direct members, or with *Include nested* the members of sub-groups too, each with its path. Disabled accounts are flagged.
+- **People → groups**: paste up to 200 names (logins, `DOMAIN\login`, UPNs or e-mail addresses, exact CN or display name, or DNs) and see every group each person is in, side by side: one row per group, one column per person, each cell *direct*, *nested* (hover for the chain) or *primary*. Groups everyone shares are highlighted and can be filtered to. Names that match nothing, or several accounts, are listed separately; for an ambiguous one you pick the right account. Export as a matrix or a long list (CSV). Tick groups to hand them to the filter builder.
+- **Filter builder**: composes LDAP login settings from a few choices: account type (AD users, inetOrgPerson, posixAccount), login and e-mail attribute, which groups may log in (optionally counting nested members through AD's `LDAP_MATCHING_RULE_IN_CHAIN`), which groups are admins, excluding disabled AD accounts, and requiring an e-mail address. It writes them in each application's own form: Generic (`{username}` / `{dn}` user and group filters), Gitea (`%[1]s`, with a literal `%` doubled for its `fmt.Sprintf`; Admin Filter) and Open WebUI (username attribute plus `LDAP_SEARCH_FILTERS`). Group DNs are escaped per RFC 4515. *List matching accounts* runs the filter to show who could log in; *Try in Login test* opens the login test with the settings filled in.
 - **Groups**: every group with its direct member count (on AD, "100+" above 100), type and OU. You can filter it and export it to CSV.
 - **Login test**: checks an application's LDAP login settings before you save them there. It replays the login for one user step by step: find the user with the user filter (exactly one must match), optionally sign in with their password, then find their groups. Modes: *Generic* (`{username}` / `{dn}` placeholders; `%s` and `%[1]s` also work), *Gitea* (filled with `%[1]s` exactly as Gitea does; user, admin and restricted filters, email attribute, group verification), and *Open WebUI* (username attribute plus search filters, mail attribute, `memberOf` groups; like Open WebUI, several matches log in as the first). The password is used for one bind on a separate connection and never stored. AD's bind error codes are spelled out (wrong password, disabled, locked, expired…).
 - **Search**: raw LDAP filters with presets (disabled users, locked out, password never expires, empty groups, …). Results export to CSV.
@@ -90,12 +92,10 @@ make test lint cover
 ```
 
 Tests run against an in-process fake LDAP server (`internal/ldaptest`) that
-emulates paging, ranged retrieval and AD-style bind/memberOf.
-
-**Gap:** the fake doesn't emulate AD extensible matching rules (for example the
-bitwise `userAccountControl:1.2.840.113556.1.4.803:=2` used by some search
-presets). Those filters pass through unchanged to a real DC, but the tests
-don't cover them.
+emulates paging, ranged retrieval, AD-style bind/memberOf, `objectCategory`
+short names, and AD's bitwise (`1.2.840.113556.1.4.803`/`804`) and in-chain
+(`1.2.840.113556.1.4.1941`) matching rules, so the filters the builder writes
+run in tests and in `make demo`.
 
 ## Roadmap
 

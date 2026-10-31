@@ -181,11 +181,12 @@ func (s *Server) find(m *gldap.SearchMessage) ([]*Entry, int) {
 	}
 	baseExists := false
 	var out []*Entry
+	matcher := matcher{entries: s.cfg.Entries}
 	for _, e := range s.cfg.Entries {
 		if e.parsedDN().EqualFold(base) {
 			baseExists = true
 		}
-		if e.inScope(base, int(m.Scope)) && match(filter, e) {
+		if e.inScope(base, int(m.Scope)) && matcher.match(filter, e) {
 			out = append(out, e)
 		}
 	}

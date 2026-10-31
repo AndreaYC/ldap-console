@@ -143,6 +143,21 @@ func (s *Server) handleUserGroups(w http.ResponseWriter, r *http.Request, sess *
 	respond(w, res, err)
 }
 
+// handleBulkUserGroups resolves a list of names (repeated name parameters)
+// and returns each one's groups. It stays a GET: it reads only, and the
+// list fits in a query string.
+func (s *Server) handleBulkUserGroups(w http.ResponseWriter, r *http.Request, sess *session.Session) {
+	names, err := bulkNames(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := s.ctx(r)
+	defer cancel()
+	res, err := sess.Dir.GroupsOfMany(ctx, names)
+	respond(w, res, err)
+}
+
 func (s *Server) handleGroupMembers(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	dn, err := dnParam(r, "dn")
 	if err != nil {

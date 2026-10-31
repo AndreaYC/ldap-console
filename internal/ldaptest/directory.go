@@ -2,9 +2,9 @@
 // directory, for exercising the real client over the wire in tests.
 //
 // It emulates the AD behaviours the console depends on: paged results,
-// ranged retrieval of large multi-valued attributes, and refusing
-// unauthenticated searches. It does not emulate AD's extensible matching
-// rules (e.g. LDAP_MATCHING_RULE_IN_CHAIN).
+// ranged retrieval of large multi-valued attributes, refusing
+// unauthenticated searches, and the bitwise (1.2.840.113556.1.4.803/804)
+// and in-chain (1.2.840.113556.1.4.1941) extensible matching rules.
 package ldaptest
 
 import (

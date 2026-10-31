@@ -6,6 +6,8 @@ import { renderSearch } from './search.js';
 import { renderGroups } from './groups.js';
 import { renderConnect } from './connect.js';
 import { renderLoginTest } from './logintest.js';
+import { renderBulk } from './bulk.js';
+import { renderBuilder } from './builder.js';
 import { hostOf } from './format.js';
 
 const main = document.getElementById('main');
@@ -38,7 +40,9 @@ async function route() {
 
   if (view === 'connect' || !info.connected) return renderConnect(main, info);
   if (view === 'groups') return renderGroups(main);
-  if (view === 'test') return renderLoginTest(main, info);
+  if (view === 'test') return renderLoginTest(main, info, params);
+  if (view === 'people') return renderBulk(main);
+  if (view === 'filters') return renderBuilder(main, params, info);
   if (view === 'search') return renderSearch(main, params, info);
 
   const b = ensureBrowse();

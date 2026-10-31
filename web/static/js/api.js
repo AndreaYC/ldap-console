@@ -44,5 +44,10 @@ export const api = {
   find: (q) => get('/api/find', { q }),
   groups: (base) => get('/api/groups', { base }),
   userGroups: (dn) => get('/api/user-groups', { dn }),
+  bulkGroups: (names) => {
+    const url = new URL('/api/user-groups-bulk', location.origin);
+    for (const n of names) url.searchParams.append('name', n);
+    return call(url, { headers: { Accept: 'application/json' } });
+  },
   groupMembers: (dn, nested) => get('/api/group-members', { dn, nested: nested ? 'true' : '' }),
 };

@@ -60,6 +60,12 @@ function save(app, values) {
   } catch { /* storage unavailable: the form still works */ }
 }
 
+// prefillLoginTest stores settings for app's form, e.g. from the filter
+// builder; fields it does not mention keep their saved values.
+export function prefillLoginTest(app, values) {
+  save(app, { ...loadSaved(app), ...values });
+}
+
 function renderStep(s) {
   return h('div', { class: 'step ' + s.status },
     h('div', { class: 'step-head' }, h('span', { class: 'mark' }, statusMark[s.status] || '?'), h('b', null, s.title)),
@@ -73,10 +79,10 @@ function renderStep(s) {
 }
 
 // renderLoginTest replays an application's LDAP login for one user.
-export function renderLoginTest(el, info) {
-  let app = 'generic';
+export function renderLoginTest(el, info, params) {
+  let app = Object.hasOwn(apps, params?.get('app') || '') ? params.get('app') : 'generic';
   const appSelect = h('select', { 'aria-label': 'Application' },
-    Object.entries(apps).map(([k, a]) => h('option', { value: k }, a.label)));
+    Object.entries(apps).map(([k, a]) => h('option', { value: k, selected: k === app }, a.label)));
   const fieldsBox = h('div');
   const username = h('input', { name: 'test-username', placeholder: 'login name, e.g. jdoe', required: true, autocomplete: 'off' });
   const password = h('input', { name: 'test-password', type: 'password', autocomplete: 'new-password', placeholder: 'optional' });
@@ -117,7 +123,8 @@ export function renderLoginTest(el, info) {
 
   const form = h('form', { class: 'logintest', onsubmit: submit },
     h('h1', null, 'Login test'),
-    h('p', { class: 'muted' }, 'Replays an application\'s LDAP login for one user, so you can see which setting is wrong before you save it there.'),
+    h('p', { class: 'muted' }, 'Replays an application\'s LDAP login for one user, so you can see which setting is wrong before you save it there. ',
+      'Need the filters first? Use the ', h('a', { href: '#/filters' }, 'filter builder'), '.'),
     h('label', { class: 'field' }, h('span', null, 'Application'), appSelect),
     fieldsBox,
     h('div', { class: 'test-user' },
