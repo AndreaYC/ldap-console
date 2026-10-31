@@ -59,8 +59,9 @@ type Object struct {
 }
 
 // MemberCount is a group's number of direct member values. More means the
-// server sent only the first range of them (AD: 1500), so Count is a lower
-// bound. Members through AD's primaryGroupID are never listed and not counted.
+// server sent only the first range of them (on AD, the first 100: Groups
+// asks for memberCountRange), so Count is a lower bound. Members through
+// AD's primaryGroupID are never listed and not counted.
 type MemberCount struct {
 	Count int  `json:"count"`
 	More  bool `json:"more,omitempty"`
