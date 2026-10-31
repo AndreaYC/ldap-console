@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim, term, membershipTag, membershipLegend } from './dom.js';
 import { parseNames, pivotGroups, cellLabel, listHeader, listRows } from './pivot.js';
 import { plural } from './format.js';
 
@@ -22,9 +22,7 @@ function saveText(text) {
 
 function cellNode(cell) {
   if (!cell) return h('span', { class: 'cell-none', 'aria-label': 'not a member' }, '·');
-  if (cell.primary) return h('span', { class: 'tag primary', title: 'AD primary group (primaryGroupID)' }, 'primary');
-  if (cell.direct) return h('span', { class: 'tag direct', title: 'direct member' }, 'direct');
-  return h('span', { class: 'tag', title: 'nested via ' + cell.via.map(rdnValue).join(' › ') }, 'nested');
+  return membershipTag(cell, cell.via.map(rdnValue));
 }
 
 // problems lists names that did not resolve to exactly one account.
@@ -34,7 +32,7 @@ function problems(results, pick) {
   if (!bad.length) return null;
   return h('div', { class: 'bulk-problems' }, bad.map((p) => h('div', { class: 'step ' + (p.status === 'notFound' ? 'warn' : 'fail') },
     h('div', { class: 'step-head' }, h('b', { class: 'mono' }, p.query), h('span', { class: 'muted' },
-      p.status === 'notFound' ? 'no account matches this login, e-mail, CN, display name or DN'
+      p.status === 'notFound' ? 'no account has this login name, email, name or full path (DN)'
         : p.status === 'ambiguous' ? `${p.matches.length} accounts match; pick one` + (p.truncated ? ' (list cut short)' : '')
           : p.error)),
     p.status === 'ambiguous' ? h('ul', { class: 'step-items' }, p.matches.map((o) => h('li', null,
@@ -49,7 +47,7 @@ function pivotTable(pivot, results) {
   const show = h('select', { name: 'bulk-show', 'aria-label': 'Which groups' },
     h('option', { value: 'all' }, 'All groups'),
     h('option', { value: 'shared' }, 'Shared by everyone'),
-    h('option', { value: 'direct' }, 'With a direct member'));
+    h('option', { value: 'direct' }, 'With someone in it directly (direct)'));
   const count = h('span', { class: 'muted' });
   const buildBtn = h('button', { type: 'button', disabled: true, onclick: () => {
     const q = new URLSearchParams();
@@ -89,14 +87,15 @@ function pivotTable(pivot, results) {
   const exportLong = h('button', { type: 'button', onclick: () => downloadCSV('people-groups-list.csv',
     listHeader, listRows(results)) }, 'Export list');
 
-  const head = h('tr', null, h('th', null, ''), h('th', null, 'Group'), h('th', { class: 'num' }, 'People'),
+  const head = h('tr', null, h('th', null, ''), h('th', null, 'Group'), h('th', { class: 'num', title: 'How many of these people are in the group' }, 'People'),
     people.map((p) => h('th', { class: 'person' }, entryLink(p.matches[0].dn, p.matches[0].name),
-      p.matches[0].disabled ? h('div', null, h('span', { class: 'tag disabled' }, 'disabled')) : null,
+      p.matches[0].disabled ? h('div', null, h('span', { class: 'tag disabled', title: 'Disabled (ACCOUNTDISABLE)' }, 'disabled')) : null,
       p.truncated ? h('div', { class: 'muted', title: 'a safety limit was hit; this person may be in more groups' }, 'incomplete') : null)));
 
   render();
   return h('div', null,
     h('div', { class: 'toolbar' }, filter, show, count, h('span', { class: 'spacer' }), buildBtn, exportBtn, exportLong),
+    membershipLegend(),
     h('div', { class: 'table-scroll' }, h('table', { class: 'pivot', 'aria-label': 'Groups by person' }, h('thead', null, head), tbody)));
 }
 
@@ -153,8 +152,10 @@ export function renderBulk(el) {
 
   const form = h('form', { class: 'bulk-form', onsubmit: (ev) => { ev.preventDefault(); run(); } },
     h('h1', null, 'People → groups'),
-    h('p', { class: 'muted' }, 'Paste names to see every group each person is in (direct, nested and AD primary), side by side. ',
-      'A name can be a login (sAMAccountName or uid), DOMAIN\\login, a user principal name or e-mail, the exact CN or display name, or a full DN.'),
+    h('p', { class: 'muted' }, 'Paste names to see every group each person is in, side by side: directly, through sub-groups, and their default group.'),
+    h('p', { class: 'muted hint' }, 'A name can be a login name (', h('code', null, 'sAMAccountName'), ' / ', h('code', null, 'uid'), '), ',
+      h('code', null, 'DOMAIN\\login'), ', an email or sign-in address (', h('code', null, 'mail'), ' / ', h('code', null, 'userPrincipalName'), '), ',
+      'an exact name (', h('code', null, 'cn'), ' / ', h('code', null, 'displayName'), '), or a full path (', h('code', null, 'DN'), ').'),
     text,
     h('div', { class: 'toolbar' }, h('span', { class: 'muted hint' }, 'One per line, or separated by commas or semicolons.'),
       counter, h('span', { class: 'spacer' }), h('button', { type: 'submit', class: 'primary' }, 'Look up groups')));

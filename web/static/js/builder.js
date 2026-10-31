@@ -1,11 +1,18 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue, claim } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue, claim, term, plainTerm } from './dom.js';
 import { buildSettings, defaultOptions, accountClasses, groupSchemas } from './filters.js';
 import { prefillLoginTest } from './logintest.js';
 import { plural } from './format.js';
 
 const storageKey = 'ldap-console.filter-builder';
-const loginAttrs = ['sAMAccountName', 'userPrincipalName', 'mail', 'uid', 'cn'];
+// Suggested login attributes, each with what users would type.
+const loginAttrs = [
+  ['sAMAccountName', 'AD login name, e.g. jdoe'],
+  ['userPrincipalName', 'AD sign-in address, e.g. jdoe@corp.local'],
+  ['mail', 'Email address'],
+  ['uid', 'LDAP login name, e.g. jdoe'],
+  ['cn', 'Name'],
+];
 
 function loadOptions(isAD) {
   const o = defaultOptions(isAD);
@@ -26,7 +33,7 @@ function saveOptions(o) {
 // from the directory's group list, or pasted as a DN.
 function groupPicker(list, groupsReady, datalistId, onChange) {
   const chips = h('div', { class: 'chips' });
-  const input = h('input', { list: datalistId, class: 'mono', placeholder: 'Group name or DN, then Enter', autocomplete: 'off', 'aria-label': 'Add group' });
+  const input = h('input', { list: datalistId, class: 'mono', placeholder: 'Group name or full path (DN), then Enter', autocomplete: 'off', 'aria-label': 'Add group' });
   const msg = h('span', { class: 'hint error-text' });
 
   const draw = () => {
@@ -50,7 +57,7 @@ function groupPicker(list, groupsReady, datalistId, onChange) {
     let dn = groups.find((g) => g.dn.toLowerCase() === lower)?.dn;
     if (!dn) {
       const byName = groups.filter((g) => g.name.toLowerCase() === lower);
-      if (byName.length > 1) { msg.textContent = `${byName.length} groups are called ${v}; pick one by its DN`; return; }
+      if (byName.length > 1) { msg.textContent = `${byName.length} groups are called ${v}; pick one by its full path (DN)`; return; }
       dn = byName[0]?.dn;
     }
     if (!dn && /^[A-Za-z][\w-]*=/.test(v)) dn = v; // a DN outside the listed groups
@@ -71,7 +78,9 @@ function field(label, control, hint) {
 }
 
 function check(label, checked, onchange, hint) {
-  return h('label', { class: 'check', title: hint || null }, h('input', { type: 'checkbox', checked, onchange }), ' ', label);
+  return h('div', { class: 'check-field' },
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', checked, onchange }), ' ', label),
+    hint ? h('span', { class: 'muted hint' }, hint) : null);
 }
 
 // settingsCard shows one application's settings with copy buttons and a
@@ -108,48 +117,50 @@ export async function renderBuilder(el, params, info) {
     out.replaceChildren(...nodes(
       s.warnings.map((w) => h('div', { class: 'notice warn-text' }, '! ', w)),
       settingsCard('Generic', 'generic', [
-        ['User search base', s.generic.userBase], ['User filter', s.generic.userFilter],
-        ['Group search base', s.generic.groupBase], ['Group filter', s.generic.groupFilter]], s.generic),
+        [term('userBase'), s.generic.userBase], [term('userFilter'), s.generic.userFilter],
+        [term('groupBase'), s.generic.groupBase], [term('groupFilter'), s.generic.groupFilter]], s.generic),
       settingsCard('Gitea (LDAP via BindDN)', 'gitea', [
-        ['User Search Base', s.gitea.userBase], ['User Filter', s.gitea.userFilter],
-        ['Admin Filter', s.gitea.adminFilter], ['Email Attribute', s.gitea.emailAttr]], s.gitea),
+        [term('userBase'), s.gitea.userBase], [term('userFilter'), s.gitea.userFilter],
+        [term('adminFilter'), s.gitea.adminFilter], [term('emailAttr'), s.gitea.emailAttr]], s.gitea),
       settingsCard('Open WebUI', 'openwebui', [
-        ['LDAP_SEARCH_BASE', s.openwebui.userBase], ['LDAP_ATTRIBUTE_FOR_USERNAME', s.openwebui.usernameAttr],
-        ['LDAP_ATTRIBUTE_FOR_MAIL', s.openwebui.emailAttr], ['LDAP_SEARCH_FILTERS', s.openwebui.searchFilters]], s.openwebui),
+        [plainTerm('Where to look for users', 'LDAP_SEARCH_BASE'), s.openwebui.userBase],
+        [plainTerm('What users type to log in', 'LDAP_ATTRIBUTE_FOR_USERNAME'), s.openwebui.usernameAttr],
+        [plainTerm('Where the email address is', 'LDAP_ATTRIBUTE_FOR_MAIL'), s.openwebui.emailAttr],
+        [plainTerm('Extra conditions', 'LDAP_SEARCH_FILTERS'), s.openwebui.searchFilters]], s.openwebui),
       h('div', { class: 'card' },
         h('div', { class: 'card-head' }, h('b', null, 'Who could log in'), h('span', { class: 'spacer' }),
           h('button', { type: 'button', class: 'primary', onclick: () => runPreview(preview, s.preview, o, info) }, 'List matching accounts')),
-        h('div', { class: 'setting' }, h('span', { class: 'muted' }, 'Filter'), h('code', null, s.preview), copyButton(s.preview)),
+        h('div', { class: 'setting' }, h('span', { class: 'muted' }, term('filter')), h('code', null, s.preview), copyButton(s.preview)),
         preview)));
   };
   const set = (k) => (ev) => { o[k] = ev.target.type === 'checkbox' ? ev.target.checked : ev.target.value.trim(); update(); };
 
   const accounts = h('select', { onchange: set('accounts') },
     Object.entries(accountClasses).map(([k, a]) => h('option', { value: k, selected: o.accounts === k }, a.label)));
-  const loginList = h('datalist', { id: 'builder-login-attrs' }, loginAttrs.map((a) => h('option', { value: a })));
+  const loginList = h('datalist', { id: 'builder-login-attrs' }, loginAttrs.map(([a, label]) => h('option', { value: a }, label)));
   const schema = h('select', { onchange: set('groupSchema') },
     Object.entries(groupSchemas).map(([k, g]) => h('option', { value: k, selected: o.groupSchema === k }, g.label)));
 
   const form = h('form', { class: 'logintest', onsubmit: (ev) => ev.preventDefault() },
     h('h1', null, 'Filter builder'),
-    h('p', { class: 'muted' }, 'Composes the user and group filters for an application\'s LDAP login. Pick who may log in; copy the result or try it in the login test.'),
+    h('p', { class: 'muted' }, 'Answer a few questions about who may log in, and get the settings to paste into your application. Copy them, or try them in the login test.'),
     datalist, loginList,
     h('fieldset', null, h('legend', null, 'Accounts'),
-      field('Account type', accounts),
-      field('Login attribute', h('input', { class: 'mono', list: 'builder-login-attrs', value: o.loginAttr, onchange: set('loginAttr') }),
-        'What users type to log in: sAMAccountName (jdoe), userPrincipalName (jdoe@corp.local), mail or uid'),
-      field('Email attribute', h('input', { class: 'mono', value: o.emailAttr, onchange: set('emailAttr') })),
-      field('User search base', h('input', { class: 'mono', value: o.userBase, placeholder: info.baseDN, onchange: set('userBase') }), 'Empty = the base DN of this connection'),
-      check('Exclude disabled accounts (AD)', o.excludeDisabled, set('excludeDisabled')),
+      field(term('accountType'), accounts),
+      field(term('loginAttr'), h('input', { class: 'mono', list: 'builder-login-attrs', value: o.loginAttr, onchange: set('loginAttr') }),
+        'Pick from the list: jdoe is sAMAccountName on AD and uid elsewhere; jdoe@corp.local is userPrincipalName'),
+      field(term('emailAttr'), h('input', { class: 'mono', value: o.emailAttr, onchange: set('emailAttr') })),
+      field(term('userBase'), h('input', { class: 'mono', value: o.userBase, placeholder: info.baseDN, onchange: set('userBase') }),
+        'A full path (DN) such as OU=Staff,DC=corp,DC=local. Empty = wherever this connection searches'),
+      check(term('disabled', 'Leave out disabled accounts'), o.excludeDisabled, set('excludeDisabled'), 'AD only'),
       check('Require an email address', o.requireEmail, set('requireEmail'), 'Gitea and Open WebUI need one to create the account')),
     h('fieldset', null, h('legend', null, 'Who may log in'),
       field('Members of any of these groups', groupPicker(o.groups, groupsReady, datalistId, update), 'No groups = every account above'),
-      check('Count nested group members (AD)', o.nested, set('nested'),
-        'Uses LDAP_MATCHING_RULE_IN_CHAIN, so members of sub-groups match too'),
-      field('Admins: members of any of these groups', groupPicker(o.adminGroups, groupsReady, datalistId, update), 'Gitea\'s Admin Filter')),
-    h('fieldset', null, h('legend', null, 'Group lookup (generic apps)'),
-      field('Group schema', schema),
-      field('Group search base', h('input', { class: 'mono', value: o.groupBase, placeholder: info.baseDN, onchange: set('groupBase') }))));
+      check(term('inChain'), o.nested, set('nested'), 'AD only. Members of a group inside one of these groups count too'),
+      field(term('adminFilter', 'Admins: members of any of these groups'), groupPicker(o.adminGroups, groupsReady, datalistId, update))),
+    h('fieldset', null, h('legend', null, 'Finding a user\u2019s groups (generic apps)'),
+      field(term('groupSchema'), schema),
+      field(term('groupBase'), h('input', { class: 'mono', value: o.groupBase, placeholder: info.baseDN, onchange: set('groupBase') }))));
 
   el.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'logintest-wrap' }, form, out)));
   update();

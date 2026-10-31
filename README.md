@@ -69,6 +69,12 @@ To try it without a domain controller, run `go run ./cmd/ldap-demo` and follow t
 - **Login test**: checks an application's LDAP login settings before you save them there. It replays the login for one user step by step: find the user with the user filter (exactly one must match), optionally sign in with their password, then find their groups. Modes: *Generic* (`{username}` / `{dn}` placeholders; `%s` and `%[1]s` also work), *Gitea* (filled with `%[1]s` exactly as Gitea does; user, admin and restricted filters, email attribute, group verification), and *Open WebUI* (username attribute plus search filters, mail attribute, `memberOf` groups; like Open WebUI, several matches log in as the first). The password is used for one bind on a separate connection and never stored. AD's bind error codes are spelled out (wrong password, disabled, locked, expired…).
 - **Search**: raw LDAP filters with presets (disabled users, locked out, password never expires, empty groups, …). Results export to CSV.
 
+Labels are written for people who don't know LDAP: plain English first, with
+the LDAP or application term after it in parentheses, e.g. *Where to search
+(`Base DN`)* or *Which accounts can log in (`User Filter`)*, so they can still
+be matched against an application's settings page. The wording lives in one
+glossary, `web/static/js/terms.js`.
+
 ## Behaviour on large directories
 
 - Every search uses paged results (RFC 2696), so AD's 1000-entry cap doesn't silently truncate lists.

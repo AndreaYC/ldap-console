@@ -1,44 +1,45 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, claim } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, claim, term, plainTerm } from './dom.js';
 import { loginSummary } from './format.js';
 
 // Field sets per application: [key, label, hint, AD default, non-AD default].
-// Placeholder hints name each app's own setting so values can be copied over.
+// A label is a glossary key, or [plain, the app's own setting name] so values
+// can be copied over.
 const apps = {
   generic: {
     label: 'Generic',
     fields: [
-      ['userBase', 'User search base', 'Empty = the base DN of this connection'],
-      ['userFilter', 'User filter', '{username} = the login name (%s and %[1]s work too)',
+      ['userBase', 'userBase', 'Empty = wherever this connection searches'],
+      ['userFilter', 'userFilter', '{username} = what the user types (%s and %[1]s work too)',
         '(&(objectCategory=person)(objectClass=user)(sAMAccountName={username}))', '(&(objectClass=inetOrgPerson)(uid={username}))'],
-      ['groupBase', 'Group search base', 'Empty = the base DN of this connection'],
-      ['groupFilter', 'Group filter', '{dn} = the user\'s DN, {username} = the login name. Empty = skip',
+      ['groupBase', 'groupBase', 'Empty = wherever this connection searches'],
+      ['groupFilter', 'groupFilter', '{dn} = the user\'s full path, {username} = what they type. Empty = skip',
         '(&(objectClass=group)(member={dn}))', '(&(objectClass=groupOfNames)(member={dn}))'],
     ],
   },
   gitea: {
     label: 'Gitea',
     fields: [
-      ['userBase', 'User Search Base', ''],
-      ['userFilter', 'User Filter', '%[1]s = the login name',
+      ['userBase', 'userBase', ''],
+      ['userFilter', 'userFilter', '%[1]s = what the user types',
         '(&(objectCategory=person)(objectClass=user)(sAMAccountName=%[1]s))', '(&(objectClass=inetOrgPerson)(uid=%[1]s))'],
-      ['adminFilter', 'Admin Filter', 'Optional'],
-      ['restrictedFilter', 'Restricted Filter', 'Optional'],
-      ['emailAttr', 'Email Attribute', '', 'mail', 'mail'],
-      ['groupBase', 'Group Search Base DN', 'Empty = group verification off'],
-      ['groupMemberAttr', 'Group Attribute Containing List Of Users', '', 'member', 'member'],
-      ['userAttrInGroup', 'User Attribute Listed In Group', 'Empty = the user\'s full DN'],
-      ['groupFilter', 'Verify group membership filter', 'Optional, e.g. (|(cn=gitea-users)(cn=gitea-admins))'],
+      ['adminFilter', 'adminFilter', 'Optional'],
+      ['restrictedFilter', 'restrictedFilter', 'Optional'],
+      ['emailAttr', 'emailAttr', '', 'mail', 'mail'],
+      ['groupBase', ['Where to look for groups', 'Group Search Base DN'], 'Empty = group check off'],
+      ['groupMemberAttr', 'groupMemberAttr', '', 'member', 'member'],
+      ['userAttrInGroup', 'userAttrInGroup', 'Empty = the user\'s full path (DN)'],
+      ['groupFilter', 'verifyGroups', 'Optional, e.g. (|(cn=gitea-users)(cn=gitea-admins))'],
     ],
   },
   openwebui: {
     label: 'Open WebUI',
     fields: [
-      ['userBase', 'Search Base', 'LDAP_SEARCH_BASE'],
-      ['usernameAttr', 'Attribute for Username', 'LDAP_ATTRIBUTE_FOR_USERNAME', 'sAMAccountName', 'uid'],
-      ['emailAttr', 'Attribute for Mail', 'LDAP_ATTRIBUTE_FOR_MAIL', 'mail', 'mail'],
-      ['searchFilters', 'Search Filters', 'LDAP_SEARCH_FILTERS, e.g. (memberOf=CN=ai-users,OU=Groups,…)'],
-      ['groupAttr', 'Attribute for Groups', 'LDAP_ATTRIBUTE_FOR_GROUPS, only with group management on'],
+      ['userBase', ['Where to look for users', 'LDAP_SEARCH_BASE'], ''],
+      ['usernameAttr', ['What users type to log in', 'LDAP_ATTRIBUTE_FOR_USERNAME'], 'jdoe is sAMAccountName on AD, uid elsewhere', 'sAMAccountName', 'uid'],
+      ['emailAttr', ['Where the email address is', 'LDAP_ATTRIBUTE_FOR_MAIL'], '', 'mail', 'mail'],
+      ['searchFilters', ['Extra conditions', 'LDAP_SEARCH_FILTERS'], 'e.g. (memberOf=CN=ai-users,OU=Groups,…)'],
+      ['groupAttr', ['Account field that lists its groups', 'LDAP_ATTRIBUTE_FOR_GROUPS'], 'Only with group management on'],
     ],
   },
 };
@@ -96,7 +97,7 @@ export function renderLoginTest(el, info, params) {
     fieldsBox.replaceChildren(...apps[app].fields.map(([key, label, hint, adDefault, otherDefault]) => {
       const fallback = (info.isAD ? adDefault : otherDefault) || '';
       inputs[key] = h('input', { name: key, class: 'mono', value: saved[key] ?? fallback, autocomplete: 'off' });
-      return h('label', { class: 'field' }, h('span', null, label), inputs[key], hint ? h('span', { class: 'muted hint' }, hint) : null);
+      return h('label', { class: 'field' }, h('span', null, Array.isArray(label) ? plainTerm(...label) : term(label)), inputs[key], hint ? h('span', { class: 'muted hint' }, hint) : null);
     }));
   };
   appSelect.addEventListener('change', () => { app = appSelect.value; drawFields(); claim(out); out.replaceChildren(placeholder()); });

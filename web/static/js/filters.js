@@ -13,17 +13,17 @@ export function escapeFilterValue(s) {
 
 // Account classes: the filter part that selects people.
 export const accountClasses = {
-  ad: { label: 'AD users', clauses: ['(objectCategory=person)', '(objectClass=user)'] },
-  inetOrgPerson: { label: 'inetOrgPerson', clauses: ['(objectClass=inetOrgPerson)'] },
-  posixAccount: { label: 'posixAccount', clauses: ['(objectClass=posixAccount)'] },
+  ad: { label: 'Active Directory users (user)', clauses: ['(objectCategory=person)', '(objectClass=user)'] },
+  inetOrgPerson: { label: 'LDAP people (inetOrgPerson)', clauses: ['(objectClass=inetOrgPerson)'] },
+  posixAccount: { label: 'Unix accounts (posixAccount)', clauses: ['(objectClass=posixAccount)'] },
 };
 
 // Group schemas: how a group lists its members, for group filters.
 export const groupSchemas = {
-  ad: { label: 'AD group (member = user DN)', objectClass: 'group', memberAttr: 'member', byDN: true },
-  groupOfNames: { label: 'groupOfNames (member = user DN)', objectClass: 'groupOfNames', memberAttr: 'member', byDN: true },
-  groupOfUniqueNames: { label: 'groupOfUniqueNames (uniqueMember = user DN)', objectClass: 'groupOfUniqueNames', memberAttr: 'uniqueMember', byDN: true },
-  posixGroup: { label: 'posixGroup (memberUid = login)', objectClass: 'posixGroup', memberAttr: 'memberUid', byDN: false },
+  ad: { label: 'AD groups, members listed by full path (group / member)', objectClass: 'group', memberAttr: 'member', byDN: true },
+  groupOfNames: { label: 'LDAP groups, members listed by full path (groupOfNames / member)', objectClass: 'groupOfNames', memberAttr: 'member', byDN: true },
+  groupOfUniqueNames: { label: 'LDAP groups, members listed by full path (groupOfUniqueNames / uniqueMember)', objectClass: 'groupOfUniqueNames', memberAttr: 'uniqueMember', byDN: true },
+  posixGroup: { label: 'Unix groups, members listed by login name (posixGroup / memberUid)', objectClass: 'posixGroup', memberAttr: 'memberUid', byDN: false },
 };
 
 export function defaultOptions(isAD) {
@@ -92,13 +92,13 @@ export function buildSettings(o) {
 
   const warnings = [];
   if (o.groups.length && o.accounts !== 'ad') {
-    warnings.push('memberOf is maintained by AD; on OpenLDAP it needs the memberof overlay, or the filter matches no one.');
+    warnings.push('Group conditions read each account\u2019s list of groups (memberOf). AD keeps it up to date; OpenLDAP only with the memberof overlay, otherwise nobody matches.');
   }
   if (o.nested && o.accounts !== 'ad') {
-    warnings.push(`The in-chain rule ${RULE_IN_CHAIN} (nested groups) works on AD only.`);
+    warnings.push(`Including people in sub-groups (LDAP_MATCHING_RULE_IN_CHAIN, ${RULE_IN_CHAIN}) works on AD only.`);
   }
   if (o.excludeDisabled && o.accounts !== 'ad') {
-    warnings.push('userAccountControl exists on AD only; other servers lock accounts differently.');
+    warnings.push('Leaving out disabled accounts reads AD\u2019s userAccountControl; other servers mark disabled accounts differently.');
   }
 
   return {
