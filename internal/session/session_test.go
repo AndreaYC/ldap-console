@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndreaYC/ldap-console/internal/ldaptest"
 )
@@ -121,6 +122,43 @@ func TestVerifyBindChecksUserPasswordOnItsOwnConnection(t *testing.T) {
 	}
 	if err := VerifyBind(context.Background(), s, ldaptest.AliceDN, "wrong"); err == nil {
 		t.Error("wrong password accepted")
+	}
+}
+
+// An anonymous console may use plain ldap:// (it sends no password), but the
+// login test then sends a real user's password: that must be refused before
+// any connection is made. 192.0.2.10 is TEST-NET-1, so a dial would hang
+// until the deadline instead of failing with the cleartext error.
+func TestVerifyBindRefusesCleartextPasswordEvenWhenConsoleIsAnonymous(t *testing.T) {
+	console := Settings{URL: "ldap://192.0.2.10:389"}
+	if err := console.Validate(); err != nil {
+		t.Fatalf("precondition: anonymous console on ldap:// should be allowed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := VerifyBind(ctx, console, ldaptest.AliceDN, ldaptest.AlicePassword)
+	if err == nil || !strings.Contains(err.Error(), "cleartext") {
+		t.Fatalf("err = %v, want a cleartext refusal", err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("refusal took %v: VerifyBind tried to connect before refusing", took)
+	}
+}
+
+// -allow-cleartext still opts in, and StartTLS makes ldap:// safe; both get
+// past the policy check and try to connect.
+func TestVerifyBindHonoursCleartextOptInAndStartTLS(t *testing.T) {
+	for _, s := range []Settings{
+		{URL: "ldap://192.0.2.10:389", AllowCleartext: true},
+		{URL: "ldap://192.0.2.10:389", StartTLS: true},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		err := VerifyBind(ctx, s, ldaptest.AliceDN, ldaptest.AlicePassword)
+		cancel()
+		if err == nil || strings.Contains(err.Error(), "cleartext") {
+			t.Errorf("%+v: err = %v, want a connection error, not a refusal", s, err)
+		}
 	}
 }
 
