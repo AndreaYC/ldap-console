@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim } from './dom.js';
-import { parseNames, pivotGroups, cellLabel } from './pivot.js';
+import { parseNames, pivotGroups, cellLabel, listHeader, listRows } from './pivot.js';
 import { plural } from './format.js';
 
 const storageKey = 'ldap-console.bulk.names';
@@ -34,7 +34,7 @@ function problems(results, pick) {
   if (!bad.length) return null;
   return h('div', { class: 'bulk-problems' }, bad.map((p) => h('div', { class: 'step ' + (p.status === 'notFound' ? 'warn' : 'fail') },
     h('div', { class: 'step-head' }, h('b', { class: 'mono' }, p.query), h('span', { class: 'muted' },
-      p.status === 'notFound' ? 'no account has this login, e-mail, CN or display name'
+      p.status === 'notFound' ? 'no account matches this login, e-mail, CN, display name or DN'
         : p.status === 'ambiguous' ? `${p.matches.length} accounts match; pick one` + (p.truncated ? ' (list cut short)' : '')
           : p.error)),
     p.status === 'ambiguous' ? h('ul', { class: 'step-items' }, p.matches.map((o) => h('li', null,
@@ -87,11 +87,7 @@ function pivotTable(pivot, results) {
     ['group', 'groupType', 'members', 'dn', ...people.map((p) => p.matches[0].name)],
     rows.map((r) => [r.group.name, r.group.groupType, r.count, r.group.dn, ...r.cells.map(cellLabel)])) }, 'Export matrix');
   const exportLong = h('button', { type: 'button', onclick: () => downloadCSV('people-groups-list.csv',
-    ['input', 'status', 'account', 'accountDN', 'group', 'membership', 'via', 'groupDN'],
-    results.flatMap((p) => p.status !== 'found'
-      ? [[p.query, p.status, '', '', '', '', '', '']]
-      : p.groups.map((g) => [p.query, p.status, p.matches[0].name, p.matches[0].dn, g.name, cellLabel(g),
-        (g.via || []).map(rdnValue).join(' > '), g.dn]))) }, 'Export list');
+    listHeader, listRows(results)) }, 'Export list');
 
   const head = h('tr', null, h('th', null, ''), h('th', null, 'Group'), h('th', { class: 'num' }, 'People'),
     people.map((p) => h('th', { class: 'person' }, entryLink(p.matches[0].dn, p.matches[0].name),

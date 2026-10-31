@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNames, pivotGroups, cellLabel } from '../static/js/pivot.js';
+import { parseNames, pivotGroups, cellLabel, listRows } from '../static/js/pivot.js';
 
 test('parseNames splits on lines, commas, semicolons and tabs, and dedupes', () => {
   assert.deepEqual(parseNames('alice, bob;carol\n\n  Alice \nCORP\\dave\te@x.local'),
@@ -44,4 +44,17 @@ test('pivotGroups matches group DNs case-insensitively', () => {
   ]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].count, 2);
+});
+
+test('listRows keeps accounts without groups and unresolved names', () => {
+  const rows = listRows([
+    { query: 'a', status: 'found', matches: [{ dn: 'CN=A,DC=x', name: 'A' }] }, // groups omitted by the server
+    { query: 'b', status: 'found', matches: [{ dn: 'CN=B,DC=x', name: 'B' }], groups: [g('All', { direct: false, via: ['CN=Eng,OU=Groups,DC=x'] })] },
+    { query: 'zz', status: 'notFound' },
+  ]);
+  assert.deepEqual(rows, [
+    ['a', 'found', 'A', 'CN=A,DC=x', '', '', '', ''],
+    ['b', 'found', 'B', 'CN=B,DC=x', 'All', 'nested', 'Eng', 'CN=All,OU=Groups,DC=x'],
+    ['zz', 'notFound', '', '', '', '', '', ''],
+  ]);
 });

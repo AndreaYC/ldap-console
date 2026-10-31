@@ -1,3 +1,5 @@
+import { rdnValue } from './format.js';
+
 // Bulk lookup helpers. Pure: no DOM access, so they run under node --test.
 
 // parseNames splits pasted text into names: one per line, or separated by
@@ -59,4 +61,19 @@ export function cellLabel(cell) {
   if (!cell) return '';
   if (cell.primary) return 'primary';
   return cell.direct ? 'direct' : 'nested';
+}
+
+export const listHeader = ['input', 'status', 'account', 'accountDN', 'group', 'membership', 'via', 'groupDN'];
+
+// listRows is the long CSV export: one row per person and group. A name
+// that did not resolve, or an account in no group (the server then omits
+// groups), still gets one row so every input shows up.
+export function listRows(results) {
+  return results.flatMap((p) => {
+    if (p.status !== 'found') return [[p.query, p.status, '', '', '', '', '', '']];
+    const who = [p.query, p.status, p.matches[0].name, p.matches[0].dn];
+    const groups = p.groups || [];
+    if (!groups.length) return [[...who, '', '', '', '']];
+    return groups.map((g) => [...who, g.name, cellLabel(g), (g.via || []).map(rdnValue).join(' > '), g.dn]);
+  });
 }

@@ -123,8 +123,8 @@ func (s *Service) resolveNames(ctx context.Context, names []string) ([]nameMatch
 		if err != nil {
 			return nil, err
 		}
-		if o := toObject(e); o.Kind != KindUnknown {
-			out[i].objects = []Object{o}
+		if isAccount(e) { // a group's or OU's DN is not a person, as by name
+			out[i].objects = []Object{toObject(e)}
 		}
 	}
 
@@ -174,6 +174,17 @@ func (s *Service) resolveNames(ctx context.Context, names []string) ([]nameMatch
 		}
 	}
 	return out, nil
+}
+
+// isAccount applies accountFilter to an entry read by DN.
+func isAccount(e *ldap.Entry) bool {
+	for _, c := range e.GetAttributeValues("objectClass") {
+		switch strings.ToLower(c) {
+		case "person", "inetorgperson", "posixaccount":
+			return true
+		}
+	}
+	return false
 }
 
 // loginKey is the value compared with the naming attributes: DOMAIN\login

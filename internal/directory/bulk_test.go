@@ -15,7 +15,9 @@ func TestGroupsOfManyResolvesEachNameAndKeepsInputOrder(t *testing.T) {
 		`CORP\bob`,         // DOMAIN\login
 		ldaptest.CarolDN,   // full DN
 		"nobody",
-		"Engineering", // a group, not a person
+		"Engineering",          // a group, not a person
+		ldaptest.EngineeringDN, // nor by its DN
+		"OU=Users," + ldaptest.BaseDN,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +25,7 @@ func TestGroupsOfManyResolvesEachNameAndKeepsInputOrder(t *testing.T) {
 	want := []struct {
 		status NameStatus
 		name   string
-	}{{NameFound, "Carol"}, {NameFound, "Alice"}, {NameFound, "Bob"}, {NameFound, "Carol"}, {NameNotFound, ""}, {NameNotFound, ""}}
+	}{{NameFound, "Carol"}, {NameFound, "Alice"}, {NameFound, "Bob"}, {NameFound, "Carol"}, {NameNotFound, ""}, {NameNotFound, ""}, {NameNotFound, ""}, {NameNotFound, ""}}
 	if len(res.People) != len(want) {
 		t.Fatalf("got %d rows, want %d", len(res.People), len(want))
 	}
