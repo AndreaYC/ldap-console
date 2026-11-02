@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, splitDN } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, splitDN, term } from './dom.js';
 import { containerPath } from './format.js';
 
 // container returns the parent DN, e.g. "OU=Groups,DC=corp,DC=local".
@@ -13,7 +13,7 @@ function memberCount(g) {
   return g.members.count + (g.members.more ? '+' : '');
 }
 
-const countHint = 'Direct members; on AD, 100+ means more than 100. Members through the AD primary group (e.g. Domain Users) are not counted.';
+const countHint = 'Direct members; on AD, 100+ means more than 100. People who have this as their default group (primary group, e.g. Domain Users) are not counted.';
 
 // renderGroups lists every group with type and location, filterable.
 export async function renderGroups(el) {
@@ -29,7 +29,7 @@ export async function renderGroups(el) {
   }
 
   const types = [...new Set(res.items.map((g) => g.groupType).filter(Boolean))].sort();
-  const filter = h('input', { type: 'search', name: 'filter-groups', placeholder: 'Filter by name, description or OU…', 'aria-label': 'Filter groups', class: 'wide' });
+  const filter = h('input', { type: 'search', name: 'filter-groups', placeholder: 'Filter by name, description or location…', 'aria-label': 'Filter groups', class: 'wide' });
   const typeSel = h('select', { name: 'group-type', 'aria-label': 'Group type' },
     h('option', { value: '' }, 'All types'), types.map((t) => h('option', { value: t }, t)));
   const count = h('span', { class: 'muted' });
@@ -60,7 +60,7 @@ export async function renderGroups(el) {
     h('div', { class: 'toolbar' }, filter, typeSel, count, h('span', { class: 'spacer' }), exportBtn),
     res.truncated ? h('div', { class: 'notice' }, 'List truncated at the safety limit.') : null,
     h('div', { class: 'table-scroll' }, h('table', { 'aria-label': 'Groups' },
-      h('thead', null, h('tr', null, h('th', null, 'Group'), h('th', { class: 'num', title: countHint }, 'Members'), h('th', null, 'Type'), h('th', null, 'Description'), h('th', null, 'Container'))),
+      h('thead', null, h('tr', null, h('th', null, 'Group'), h('th', { class: 'num', title: countHint }, 'Members'), h('th', null, term('groupType')), h('th', null, 'Description'), h('th', null, term('container')))),
       tbody))));
   render();
 }

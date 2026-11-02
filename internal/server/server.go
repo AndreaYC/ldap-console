@@ -90,6 +90,8 @@ func New(initial *session.Session, opts Options) *Server {
 	mux.HandleFunc("GET /api/find", s.withSession(s.handleFind))
 	mux.HandleFunc("GET /api/groups", s.withSession(s.handleGroups))
 	mux.HandleFunc("GET /api/user-groups", s.withSession(s.handleUserGroups))
+	mux.HandleFunc("GET /api/user-groups-bulk", s.withSession(s.handleBulkUserGroups))
+	mux.HandleFunc("GET /api/explain", s.withSession(s.handleExplain))
 	mux.HandleFunc("GET /api/group-members", s.withSession(s.handleGroupMembers))
 
 	static, err := fs.Sub(web.Static, "static")

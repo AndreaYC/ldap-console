@@ -1,5 +1,6 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, term } from './dom.js';
+import { explainPanel } from './explain.js';
 
 const presets = [
   ['All users', '(&(objectCategory=person)(objectClass=user))'],
@@ -48,9 +49,10 @@ function resultsTable(entries, requested) {
 export function renderSearch(el, params, info) {
   const base = h('input', { value: params.get('base') || info.baseDN, 'aria-label': 'Base DN', class: 'mono' });
   const filter = h('input', { value: params.get('filter') || '', placeholder: '(&(objectClass=user)(sAMAccountName=j*))', 'aria-label': 'Filter', class: 'mono' });
-  const attrs = h('input', { value: params.get('attrs') || 'cn,sAMAccountName,mail,memberOf', placeholder: 'cn,mail (empty = all)', 'aria-label': 'Attributes', class: 'mono' });
+  const attrs = h('input', { value: params.get('attrs') || 'cn,sAMAccountName,mail,memberOf', placeholder: 'cn,mail (empty = every column)', 'aria-label': 'Attributes', class: 'mono' });
   const scope = h('select', { 'aria-label': 'Scope' },
-    ['sub', 'one', 'base'].map((s) => h('option', { value: s, selected: (params.get('scope') || 'sub') === s }, s)));
+    [['sub', 'Everything below'], ['one', 'One level down'], ['base', 'Only this entry']].map(([s, label]) =>
+      h('option', { value: s, selected: (params.get('scope') || 'sub') === s }, `${label} (${s})`)));
   const limit = h('input', { type: 'number', min: 1, max: 10000, value: params.get('limit') || '500', id: 'search-limit', class: 'limit' });
   const out = h('div');
 
@@ -63,14 +65,16 @@ export function renderSearch(el, params, info) {
   const form = h('form', { class: 'form', onsubmit: submit },
     h('label', null, 'Presets'), h('div', { class: 'presets' }, presets.map(([label, f]) =>
       h('button', { type: 'button', onclick: () => { filter.value = f; submit(); } }, label))),
-    h('label', null, 'Base DN'), base,
-    h('label', null, 'Filter'), filter,
-    h('label', null, 'Attributes'), attrs,
-    h('label', null, 'Scope'), h('div', { class: 'row' }, scope,
+    h('label', null, term('base')), base,
+    h('label', null, term('filter')), filter,
+    h('label', null, term('attributes')), attrs,
+    h('label', null, term('scope')), h('div', { class: 'row' }, scope,
       h('label', { for: 'search-limit', class: 'muted' }, 'Max results'), limit,
       h('span', { class: 'spacer' }), h('button', { class: 'primary', type: 'submit' }, 'Search')));
 
-  el.replaceChildren(h('div', { class: 'page' }, form, out));
+  const check = explainPanel(() => ({ filter: filter.value.trim(), base: base.value.trim() }),
+    { label: 'Why is someone (not) in the results?' });
+  el.replaceChildren(h('div', { class: 'page' }, form, h('div', { class: 'search-explain' }, check), out));
   if (params.get('filter')) run(out, Object.fromEntries(params));
 }
 

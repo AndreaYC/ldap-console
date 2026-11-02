@@ -1,4 +1,6 @@
 import { toCSV } from './csv.js';
+import { terms } from './terms.js';
+export { termText } from './terms.js';
 export { claim } from './claim.js';
 export { splitDN, rdnValue } from './format.js';
 
@@ -19,6 +21,35 @@ export function h(tag, props, ...children) {
     el.append(c instanceof Node ? c : String(c));
   }
   return el;
+}
+
+// term renders a label as plain English with the original term after it in
+// code style: "Where to search (Base DN)". plain overrides the glossary's
+// wording where the context needs a different phrase.
+export function term(key, plain) {
+  const [p, original] = terms[key];
+  return plainTerm(plain ?? p, original);
+}
+
+// plainTerm is term for a pairing outside the glossary, such as an
+// application's own setting name.
+export function plainTerm(plain, original) {
+  return [plain, ' ', h('span', { class: 'term' }, '(', h('code', null, original), ')')];
+}
+
+// membershipTag labels how an account is in a group. Tags stay short in
+// dense tables; membershipLegend carries the original terms once.
+export function membershipTag(m, via) {
+  if (m.primary) return h('span', { class: 'tag primary', title: 'Default group (primary group): AD’s primaryGroupID, never listed in memberOf' }, 'default group');
+  if (m.direct) return h('span', { class: 'tag direct', title: 'Directly (direct): the group lists this member itself' }, 'direct');
+  return h('span', { class: 'tag', title: 'Through a sub-group (nested)' + (via?.length ? ': ' + via.join(' › ') : '') }, 'via sub-group');
+}
+
+export function membershipLegend() {
+  return h('div', { class: 'legend muted' },
+    h('span', { class: 'tag direct' }, 'direct'), ' ', term('direct', 'the group lists them itself'), ' · ',
+    h('span', { class: 'tag' }, 'via sub-group'), ' ', term('nested', 'they are in a group inside it'), ' · ',
+    h('span', { class: 'tag primary' }, 'default group'), ' ', term('primary', 'AD’s default group, e.g. Domain Users, which memberOf never lists'));
 }
 
 const kindLabels = {

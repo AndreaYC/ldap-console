@@ -143,6 +143,72 @@ func (s *Server) handleUserGroups(w http.ResponseWriter, r *http.Request, sess *
 	respond(w, res, err)
 }
 
+// handleBulkUserGroups resolves a list of names (repeated name parameters)
+// and returns each one's groups. It stays a GET: it reads only, and the
+// list fits in a query string.
+func (s *Server) handleBulkUserGroups(w http.ResponseWriter, r *http.Request, sess *session.Session) {
+	names, err := bulkNames(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := s.ctx(r)
+	defer cancel()
+	res, err := sess.Dir.GroupsOfMany(ctx, names)
+	respond(w, res, err)
+}
+
+type explainResponse struct {
+	directory.Explanation
+	Values []attribute `json:"values,omitempty"`
+}
+
+// handleExplain checks one account against a filter, part by part.
+func (s *Server) handleExplain(w http.ResponseWriter, r *http.Request, sess *session.Session) {
+	p := r.URL.Query()
+	who := strings.TrimSpace(p.Get("who"))
+	switch {
+	case who == "":
+		writeError(w, badRequest("enter the person to check"))
+		return
+	case len(who) > maxNameLen || strings.HasPrefix(who, "("):
+		writeError(w, badRequest("%.40q is not a login name, email or DN", who))
+		return
+	}
+	filter := strings.TrimSpace(p.Get("filter"))
+	if filter == "" {
+		writeError(w, badRequest("filter is required"))
+		return
+	}
+	if _, err := ldap.CompileFilter(filter); err != nil {
+		writeError(w, badRequest("invalid filter: %v", err))
+		return
+	}
+	base := ""
+	if p.Get("base") != "" {
+		var err error
+		if base, err = dnParam(r, "base"); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	ctx, cancel := s.ctx(r)
+	defer cancel()
+	res, err := sess.Dir.Explain(ctx, who, filter, base)
+	if errors.Is(err, directory.ErrFilterTooLarge) {
+		err = badRequest("%v", err)
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := explainResponse{Explanation: res}
+	for _, v := range res.Values {
+		out.Values = append(out.Values, attribute{Name: v.Name, Values: s.render.Render(v.Name, v.Values)})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) handleGroupMembers(w http.ResponseWriter, r *http.Request, sess *session.Session) {
 	dn, err := dnParam(r, "dn")
 	if err != nil {

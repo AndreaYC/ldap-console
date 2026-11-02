@@ -42,6 +42,7 @@ func CorpAD() Config {
 	user := func(dn, sam, rid, uac string) *Entry {
 		return NewEntry(dn,
 			"objectClass", "top", "objectClass", "person", "objectClass", "organizationalPerson", "objectClass", "user",
+			"objectCategory", "CN=Person,CN=Schema,CN=Configuration,"+BaseDN,
 			"cn", cnOf(dn), "sAMAccountName", sam, "mail", sam+"@corp.local", "userAccountControl", uac,
 			"primaryGroupID", "513", "objectSid", sidBytes(domainSID+"-"+rid))
 	}

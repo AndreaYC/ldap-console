@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, errorBox } from './dom.js';
+import { h, nodes, errorBox, term } from './dom.js';
 
 function field(label, input, hint) {
   return h('label', { class: 'field' }, h('span', null, label), input, hint ? h('span', { class: 'muted hint' }, hint) : null);
@@ -46,12 +46,12 @@ export function renderConnect(el, info) {
   const form = h('form', { class: 'connect', onsubmit: onSubmit },
     h('h1', null, info.connected ? 'Switch server' : 'Connect to a directory'),
     field('Server', url, 'ldaps://host:636, or ldap://host:389 with StartTLS'),
-    field('Bind account', bindDN, 'AD: user@domain or DOMAIN\\user. Empty = anonymous'),
+    field(term('bindAccount'), bindDN, 'AD: user@domain or DOMAIN\\user. Empty = anonymous'),
     field('Password', password, 'Used for this connection only; never saved'),
     h('details', { open: !!(p.baseDN || p.startTLS || p.caFile) },
       h('summary', null, 'Advanced'),
-      field('Base DN', baseDN),
-      h('label', { class: 'check' }, startTLS, 'Use StartTLS on ldap://'),
+      field(term('base'), baseDN),
+      h('label', { class: 'check' }, startTLS, 'Encrypt plain ldap:// connections ', h('span', { class: 'term' }, '(', h('code', null, 'StartTLS'), ')')),
       field('CA certificate file', caFile, 'Only if the server certificate is signed by a CA your Mac does not trust')),
     status,
     h('div', { class: 'toolbar' }, ...nodes(submit,

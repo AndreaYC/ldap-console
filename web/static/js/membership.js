@@ -1,12 +1,11 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim, term, membershipTag, membershipLegend } from './dom.js';
 import { plural } from './format.js';
 
 function tags(m) {
   return [
-    m.direct ? h('span', { class: 'tag direct' }, 'direct') : h('span', { class: 'tag' }, 'nested'),
-    m.primary ? h('span', { class: 'tag primary', title: 'AD primary group (primaryGroupID) — not listed in memberOf' }, 'primary') : null,
-    m.disabled ? h('span', { class: 'tag disabled' }, 'disabled') : null,
+    membershipTag(m, (m.via || []).map(rdnValue)),
+    m.disabled ? h('span', { class: 'tag disabled', title: 'Disabled (ACCOUNTDISABLE)' }, 'disabled') : null,
   ];
 }
 
@@ -22,12 +21,14 @@ function viaCell(via) {
 
 function stats(items) {
   const direct = items.filter((m) => m.direct).length;
+  const primary = items.filter((m) => m.primary).length; // AD marks these direct too
   const byKind = {};
   for (const m of items) byKind[m.kind] = (byKind[m.kind] || 0) + 1;
   return h('div', { class: 'stats' },
     h('span', null, h('b', null, items.length), ' total'),
-    h('span', null, h('b', null, direct), ' direct'),
-    h('span', null, h('b', null, items.length - direct), ' nested'),
+    h('span', null, h('b', null, direct - primary), ' direct'),
+    h('span', null, h('b', null, items.length - direct), ' via sub-groups'),
+    primary ? h('span', null, h('b', null, primary), primary === 1 ? ' default group' : ' default groups') : null,
     Object.entries(byKind).map(([k, n]) => h('span', null, h('b', null, n), ' ', plural(n, k).replace(/^\d+ /, ''))));
 }
 
@@ -37,8 +38,8 @@ function membershipTable(res, { title, csvName, showGroupType }) {
   const filter = h('input', { type: 'search', name: 'filter-list', placeholder: 'Filter…', 'aria-label': 'Filter list' });
   const scope = h('select', { name: 'membership-type', 'aria-label': 'Membership type' },
     h('option', { value: 'all' }, 'All'),
-    h('option', { value: 'direct' }, 'Direct only'),
-    h('option', { value: 'nested' }, 'Nested only'));
+    h('option', { value: 'direct' }, 'Only direct (direct)'),
+    h('option', { value: 'nested' }, 'Only through sub-groups (nested)'));
   const tbody = h('tbody');
 
   const render = () => {
@@ -70,10 +71,11 @@ function membershipTable(res, { title, csvName, showGroupType }) {
 
   wrap.append(...nodes(
     h('div', { class: 'toolbar' }, stats(res.items), h('span', { class: 'spacer' }), filter, scope, exportBtn),
+    membershipLegend(),
     res.truncated ? h('div', { class: 'notice' }, 'Result truncated at the safety limit.') : null,
     h('table', { 'aria-label': title },
       h('thead', null, h('tr', null,
-        h('th', null, 'Name'), showGroupType ? h('th', null, 'Type') : null, h('th', null, 'Membership'), h('th', null, 'Via'))),
+        h('th', null, 'Name'), showGroupType ? h('th', null, term('groupType')) : null, h('th', null, 'Membership'), h('th', null, 'Through'))),
       tbody)));
   render();
   return wrap;
@@ -86,7 +88,7 @@ export async function renderMemberOf(el, dn) {
     const res = await api.userGroups(dn);
     if (!current()) return;
     el.replaceChildren(
-      h('p', { class: 'notice' }, 'Effective groups: direct, inherited through nested groups (Via), and the AD primary group.'),
+      h('p', { class: 'notice' }, 'Every group this account is in: directly, through sub-groups (the Through column shows the path), and its default group.'),
       membershipTable(res, { title: 'Member of', csvName: `${res.subject.name}-groups.csv`, showGroupType: true }));
   } catch (err) {
     if (current()) el.replaceChildren(errorBox(err));
@@ -97,7 +99,7 @@ export async function renderMembers(el, dn) {
   const nested = h('input', { type: 'checkbox', id: 'nested', name: 'nested', checked: true });
   const body = h('div');
   const head = h('div', { class: 'toolbar' },
-    h('label', { for: 'nested' }, nested, ' Include nested members (people in sub-groups too)'));
+    h('label', { for: 'nested' }, nested, ' ', term('nested', 'Include people in sub-groups')));
   claim(el); // drop a still-loading Member of response
   el.replaceChildren(head, body);
 

@@ -1,11 +1,13 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, errorBox, debounce, claim } from './dom.js';
+import { h, nodes, kindBadge, errorBox, debounce, claim, term } from './dom.js';
 import { Tree } from './tree.js';
 import { renderEntry } from './entry.js';
 import { renderSearch } from './search.js';
 import { renderGroups } from './groups.js';
 import { renderConnect } from './connect.js';
 import { renderLoginTest } from './logintest.js';
+import { renderBulk } from './bulk.js';
+import { renderBuilder } from './builder.js';
 import { hostOf } from './format.js';
 
 const main = document.getElementById('main');
@@ -38,7 +40,9 @@ async function route() {
 
   if (view === 'connect' || !info.connected) return renderConnect(main, info);
   if (view === 'groups') return renderGroups(main);
-  if (view === 'test') return renderLoginTest(main, info);
+  if (view === 'test') return renderLoginTest(main, info, params);
+  if (view === 'people') return renderBulk(main);
+  if (view === 'filters') return renderBuilder(main, params, info);
   if (view === 'search') return renderSearch(main, params, info);
 
   const b = ensureBrowse();
@@ -102,8 +106,8 @@ function renderConn(el) {
       h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'conn-host' }, hostOf(info.url)), h('span', { class: 'caret-down', 'aria-hidden': 'true' }, '▾')),
     h('div', { class: 'conn-panel' }, ...nodes(
       row('Server', info.url, true),
-      row('Bound as', info.bindDN || 'anonymous', true),
-      row('Base DN', info.baseDN, true),
+      row(term('bindAccount', 'Signed in as'), info.bindDN || 'anonymous', true),
+      row(term('base'), info.baseDN, true),
       h('div', { class: 'conn-row' }, h('span', { class: 'pill' }, info.vendor || 'LDAP'),
         info.readOnly ? h('span', { class: 'pill ro' }, 'read-only') : null),
       h('div', { class: 'conn-actions' }, h('a', { href: '#/connect', class: 'button', onclick: () => { el.open = false; } }, 'Switch server…')))));

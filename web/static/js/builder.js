@@ -1,0 +1,191 @@
+import { api } from './api.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue, claim, term, plainTerm } from './dom.js';
+import { buildSettings, defaultOptions, accountClasses, groupSchemas } from './filters.js';
+import { prefillLoginTest } from './logintest.js';
+import { explainPanel } from './explain.js';
+import { plural } from './format.js';
+
+const storageKey = 'ldap-console.filter-builder';
+// Suggested login attributes, each with what users would type.
+const loginAttrs = [
+  ['sAMAccountName', 'AD login name, e.g. jdoe'],
+  ['userPrincipalName', 'AD sign-in address, e.g. jdoe@corp.local'],
+  ['mail', 'Email address'],
+  ['uid', 'LDAP login name, e.g. jdoe'],
+  ['cn', 'Name'],
+];
+
+function loadOptions(isAD) {
+  const o = defaultOptions(isAD);
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    for (const k of Object.keys(o)) if (k in saved && typeof saved[k] === typeof o[k]) o[k] = saved[k];
+  } catch { /* storage unavailable or corrupt: defaults */ }
+  return o;
+}
+
+function saveOptions(o) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(o));
+  } catch { /* storage unavailable: the builder still works */ }
+}
+
+// groupPicker edits a list of group DNs. Entries are picked by name or DN
+// from the directory's group list, or pasted as a DN.
+function groupPicker(list, groupsReady, datalistId, onChange) {
+  const chips = h('div', { class: 'chips' });
+  const input = h('input', { list: datalistId, class: 'mono', placeholder: 'Group name or full path (DN), then Enter', autocomplete: 'off', 'aria-label': 'Add group' });
+  const msg = h('span', { class: 'hint error-text' });
+
+  const draw = () => {
+    chips.replaceChildren(...list.map((dn, i) => h('span', { class: 'chip', title: dn },
+      kindBadge('group'), entryLink(dn, rdnValue(dn)),
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Remove ' + rdnValue(dn),
+        onclick: () => { list.splice(i, 1); draw(); onChange(); } }, '×'))));
+  };
+
+  // Enter fires both keydown and change; the second call sees the value
+  // already taken and returns.
+  let pending = '';
+  const add = async () => {
+    const v = input.value.trim();
+    if (!v || v === pending) return;
+    msg.textContent = '';
+    pending = v;
+    const groups = await groupsReady;
+    pending = '';
+    const lower = v.toLowerCase();
+    let dn = groups.find((g) => g.dn.toLowerCase() === lower)?.dn;
+    if (!dn) {
+      const byName = groups.filter((g) => g.name.toLowerCase() === lower);
+      if (byName.length > 1) { msg.textContent = `${byName.length} groups are called ${v}; pick one by its full path (DN)`; return; }
+      dn = byName[0]?.dn;
+    }
+    if (!dn && /^[A-Za-z][\w-]*=/.test(v)) dn = v; // a DN outside the listed groups
+    if (!dn) { msg.textContent = `No group named ${v}`; return; }
+    if (!list.some((d) => d.toLowerCase() === dn.toLowerCase())) list.push(dn);
+    input.value = '';
+    draw();
+    onChange();
+  };
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } });
+  input.addEventListener('change', add);
+  draw();
+  return h('div', { class: 'picker' }, chips, input, msg);
+}
+
+function field(label, control, hint) {
+  return h('label', { class: 'field' }, h('span', null, label), control, hint ? h('span', { class: 'muted hint' }, hint) : null);
+}
+
+function check(label, checked, onchange, hint) {
+  return h('div', { class: 'check-field' },
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', checked, onchange }), ' ', label),
+    hint ? h('span', { class: 'muted hint' }, hint) : null);
+}
+
+// settingsCard shows one application's settings with copy buttons and a
+// hand-off to the login test, prefilled with exactly these values.
+function settingsCard(title, app, rows, values) {
+  return h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('b', null, title), h('span', { class: 'spacer' }),
+      h('button', { type: 'button', onclick: () => { prefillLoginTest(app, values); location.hash = '#/test?app=' + app; } }, 'Try in Login test')),
+    rows.filter(([, v]) => v !== undefined).map(([label, v]) => h('div', { class: 'setting' },
+      h('span', { class: 'muted' }, label),
+      v ? h('code', null, v) : h('span', { class: 'muted' }, '(leave empty)'),
+      v ? copyButton(v) : null)));
+}
+
+// renderBuilder composes user and group filters for an application's LDAP
+// login from a few choices: who the accounts are, how they log in, which
+// groups may log in, and which are admins.
+export async function renderBuilder(el, params, info) {
+  const o = loadOptions(info.isAD);
+  const fromHash = params.getAll('group');
+  if (fromHash.length) o.groups = fromHash; // handed over from People → groups
+  const groupsReady = api.groups().then((r) => r.items).catch(() => []);
+  const datalistId = 'builder-groups';
+  const datalist = h('datalist', { id: datalistId });
+  groupsReady.then((gs) => datalist.replaceChildren(...gs.map((g) => h('option', { value: g.dn }, g.name))));
+
+  const out = h('div', { class: 'builder-out' });
+  const preview = h('div');
+  let current; // the settings shown now, for the person check
+  const personCheck = explainPanel(() => ({ filter: current.generic.userFilter, base: o.userBase || info.baseDN }),
+    { label: 'Why can or can\u2019t someone log in?' });
+  const update = () => {
+    saveOptions(o);
+    claim(preview); // a running preview is for the old filter
+    preview.replaceChildren();
+    const s = buildSettings(o);
+    current = s;
+    out.replaceChildren(...nodes(
+      s.warnings.map((w) => h('div', { class: 'notice warn-text' }, '! ', w)),
+      settingsCard('Generic', 'generic', [
+        [term('userBase'), s.generic.userBase], [term('userFilter'), s.generic.userFilter],
+        [term('groupBase'), s.generic.groupBase], [term('groupFilter'), s.generic.groupFilter]], s.generic),
+      settingsCard('Gitea (LDAP via BindDN)', 'gitea', [
+        [term('userBase'), s.gitea.userBase], [term('userFilter'), s.gitea.userFilter],
+        [term('adminFilter'), s.gitea.adminFilter], [term('emailAttr'), s.gitea.emailAttr]], s.gitea),
+      settingsCard('Open WebUI', 'openwebui', [
+        [plainTerm('Where to look for users', 'LDAP_SEARCH_BASE'), s.openwebui.userBase],
+        [plainTerm('What users type to log in', 'LDAP_ATTRIBUTE_FOR_USERNAME'), s.openwebui.usernameAttr],
+        [plainTerm('Where the email address is', 'LDAP_ATTRIBUTE_FOR_MAIL'), s.openwebui.emailAttr],
+        [plainTerm('Extra conditions', 'LDAP_SEARCH_FILTERS'), s.openwebui.searchFilters]], s.openwebui),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('b', null, 'Who could log in'), h('span', { class: 'spacer' }),
+          h('button', { type: 'button', class: 'primary', onclick: () => runPreview(preview, s.preview, o, info) }, 'List matching accounts')),
+        h('div', { class: 'setting' }, h('span', { class: 'muted' }, term('filter')), h('code', null, s.preview), copyButton(s.preview)),
+        preview,
+        personCheck)));
+  };
+  const set = (k) => (ev) => { o[k] = ev.target.type === 'checkbox' ? ev.target.checked : ev.target.value.trim(); update(); };
+
+  const accounts = h('select', { onchange: set('accounts') },
+    Object.entries(accountClasses).map(([k, a]) => h('option', { value: k, selected: o.accounts === k }, a.label)));
+  const loginList = h('datalist', { id: 'builder-login-attrs' }, loginAttrs.map(([a, label]) => h('option', { value: a }, label)));
+  const schema = h('select', { onchange: set('groupSchema') },
+    Object.entries(groupSchemas).map(([k, g]) => h('option', { value: k, selected: o.groupSchema === k }, g.label)));
+
+  const form = h('form', { class: 'logintest', onsubmit: (ev) => ev.preventDefault() },
+    h('h1', null, 'Filter builder'),
+    h('p', { class: 'muted' }, 'Answer a few questions about who may log in, and get the settings to paste into your application. Copy them, or try them in the login test.'),
+    datalist, loginList,
+    h('fieldset', null, h('legend', null, 'Accounts'),
+      field(term('accountType'), accounts),
+      field(term('loginAttr'), h('input', { class: 'mono', list: 'builder-login-attrs', value: o.loginAttr, onchange: set('loginAttr') }),
+        'Pick from the list: jdoe is sAMAccountName on AD and uid elsewhere; jdoe@corp.local is userPrincipalName'),
+      field(term('emailAttr'), h('input', { class: 'mono', value: o.emailAttr, onchange: set('emailAttr') })),
+      field(term('userBase'), h('input', { class: 'mono', value: o.userBase, placeholder: info.baseDN, onchange: set('userBase') }),
+        'A full path (DN) such as OU=Staff,DC=corp,DC=local. Empty = wherever this connection searches'),
+      check(term('disabled', 'Leave out disabled accounts'), o.excludeDisabled, set('excludeDisabled'), 'AD only'),
+      check('Require an email address', o.requireEmail, set('requireEmail'), 'Gitea and Open WebUI need one to create the account')),
+    h('fieldset', null, h('legend', null, 'Who may log in'),
+      field('Members of any of these groups', groupPicker(o.groups, groupsReady, datalistId, update), 'No groups = every account above'),
+      check(term('inChain'), o.nested, set('nested'), 'AD only. Members of a group inside one of these groups count too'),
+      field(term('adminFilter', 'Admins: members of any of these groups'), groupPicker(o.adminGroups, groupsReady, datalistId, update))),
+    h('fieldset', null, h('legend', null, 'Finding a user\u2019s groups (generic apps)'),
+      field(term('groupSchema'), schema),
+      field(term('groupBase'), h('input', { class: 'mono', value: o.groupBase, placeholder: info.baseDN, onchange: set('groupBase') }))));
+
+  el.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'logintest-wrap' }, form, out)));
+  update();
+}
+
+async function runPreview(el, filter, o, info) {
+  const current = claim(el);
+  el.replaceChildren(loading('Searching…'));
+  try {
+    const res = await api.search({ base: o.userBase || info.baseDN, filter, attrs: [o.loginAttr, o.emailAttr].filter(Boolean).join(','), limit: 1000 });
+    if (!current()) return;
+    const attrOf = (e, name) => e.attributes.find((a) => a.name.toLowerCase() === name.toLowerCase())?.values[0]?.text || '';
+    el.replaceChildren(...nodes(
+      h('div', { class: 'step-msg' }, h('b', null, plural(res.entries.length, 'account')), res.truncated ? ' (first 1000 shown)' : '',
+        res.entries.length ? '' : '. Nobody could log in: check the groups, the account type and the search base'),
+      res.entries.length ? h('ul', { class: 'step-items' }, res.entries.map((e) => h('li', null,
+        kindBadge(e.kind, e.dn), entryLink(e.dn, rdnValue(e.dn)),
+        h('span', { class: 'mono muted' }, attrOf(e, o.loginAttr)), h('span', { class: 'muted' }, attrOf(e, o.emailAttr))))) : null));
+  } catch (err) {
+    if (current()) el.replaceChildren(errorBox(err));
+  }
+}

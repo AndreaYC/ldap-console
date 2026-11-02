@@ -1,44 +1,46 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, claim } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, claim, term, plainTerm } from './dom.js';
 import { loginSummary } from './format.js';
+import { runExplain } from './explain.js';
 
 // Field sets per application: [key, label, hint, AD default, non-AD default].
-// Placeholder hints name each app's own setting so values can be copied over.
+// A label is a glossary key, or [plain, the app's own setting name] so values
+// can be copied over.
 const apps = {
   generic: {
     label: 'Generic',
     fields: [
-      ['userBase', 'User search base', 'Empty = the base DN of this connection'],
-      ['userFilter', 'User filter', '{username} = the login name (%s and %[1]s work too)',
+      ['userBase', 'userBase', 'Empty = wherever this connection searches'],
+      ['userFilter', 'userFilter', '{username} = what the user types (%s and %[1]s work too)',
         '(&(objectCategory=person)(objectClass=user)(sAMAccountName={username}))', '(&(objectClass=inetOrgPerson)(uid={username}))'],
-      ['groupBase', 'Group search base', 'Empty = the base DN of this connection'],
-      ['groupFilter', 'Group filter', '{dn} = the user\'s DN, {username} = the login name. Empty = skip',
+      ['groupBase', 'groupBase', 'Empty = wherever this connection searches'],
+      ['groupFilter', 'groupFilter', '{dn} = the user\'s full path, {username} = what they type. Empty = skip',
         '(&(objectClass=group)(member={dn}))', '(&(objectClass=groupOfNames)(member={dn}))'],
     ],
   },
   gitea: {
     label: 'Gitea',
     fields: [
-      ['userBase', 'User Search Base', ''],
-      ['userFilter', 'User Filter', '%[1]s = the login name',
+      ['userBase', 'userBase', ''],
+      ['userFilter', 'userFilter', '%[1]s = what the user types',
         '(&(objectCategory=person)(objectClass=user)(sAMAccountName=%[1]s))', '(&(objectClass=inetOrgPerson)(uid=%[1]s))'],
-      ['adminFilter', 'Admin Filter', 'Optional'],
-      ['restrictedFilter', 'Restricted Filter', 'Optional'],
-      ['emailAttr', 'Email Attribute', '', 'mail', 'mail'],
-      ['groupBase', 'Group Search Base DN', 'Empty = group verification off'],
-      ['groupMemberAttr', 'Group Attribute Containing List Of Users', '', 'member', 'member'],
-      ['userAttrInGroup', 'User Attribute Listed In Group', 'Empty = the user\'s full DN'],
-      ['groupFilter', 'Verify group membership filter', 'Optional, e.g. (|(cn=gitea-users)(cn=gitea-admins))'],
+      ['adminFilter', 'adminFilter', 'Optional'],
+      ['restrictedFilter', 'restrictedFilter', 'Optional'],
+      ['emailAttr', 'emailAttr', '', 'mail', 'mail'],
+      ['groupBase', ['Where to look for groups', 'Group Search Base DN'], 'Empty = group check off'],
+      ['groupMemberAttr', 'groupMemberAttr', '', 'member', 'member'],
+      ['userAttrInGroup', 'userAttrInGroup', 'Empty = the user\'s full path (DN)'],
+      ['groupFilter', 'verifyGroups', 'Optional, e.g. (|(cn=gitea-users)(cn=gitea-admins))'],
     ],
   },
   openwebui: {
     label: 'Open WebUI',
     fields: [
-      ['userBase', 'Search Base', 'LDAP_SEARCH_BASE'],
-      ['usernameAttr', 'Attribute for Username', 'LDAP_ATTRIBUTE_FOR_USERNAME', 'sAMAccountName', 'uid'],
-      ['emailAttr', 'Attribute for Mail', 'LDAP_ATTRIBUTE_FOR_MAIL', 'mail', 'mail'],
-      ['searchFilters', 'Search Filters', 'LDAP_SEARCH_FILTERS, e.g. (memberOf=CN=ai-users,OU=Groups,…)'],
-      ['groupAttr', 'Attribute for Groups', 'LDAP_ATTRIBUTE_FOR_GROUPS, only with group management on'],
+      ['userBase', ['Where to look for users', 'LDAP_SEARCH_BASE'], ''],
+      ['usernameAttr', ['What users type to log in', 'LDAP_ATTRIBUTE_FOR_USERNAME'], 'jdoe is sAMAccountName on AD, uid elsewhere', 'sAMAccountName', 'uid'],
+      ['emailAttr', ['Where the email address is', 'LDAP_ATTRIBUTE_FOR_MAIL'], '', 'mail', 'mail'],
+      ['searchFilters', ['Extra conditions', 'LDAP_SEARCH_FILTERS'], 'e.g. (memberOf=CN=ai-users,OU=Groups,…)'],
+      ['groupAttr', ['Account field that lists its groups', 'LDAP_ATTRIBUTE_FOR_GROUPS'], 'Only with group management on'],
     ],
   },
 };
@@ -60,23 +62,49 @@ function save(app, values) {
   } catch { /* storage unavailable: the form still works */ }
 }
 
-function renderStep(s) {
+// prefillLoginTest stores settings for app's form, e.g. from the filter
+// builder; fields it does not mention keep their saved values.
+export function prefillLoginTest(app, values) {
+  save(app, { ...loadSaved(app), ...values });
+}
+
+// Steps whose filter is tested against the user's own entry, so "why
+// (not)?" has an answer: finding the user, and Gitea's admin and
+// restricted filters.
+const explainable = new Set(['user', 'admin', 'restricted']);
+
+// whyBox explains a step's filter for the test user. A user search that
+// found nobody explains itself straight away: that is when people ask.
+function whyBox(s, username) {
+  if (!explainable.has(s.id) || !s.filter || !username || s.status === 'skipped') return null;
+  const box = h('div', { class: 'step-why' });
+  const run = () => runExplain(box, { who: username, filter: s.filter, base: s.base });
+  if (s.id === 'user' && s.status === 'fail' && !s.items?.length) {
+    run();
+    return box;
+  }
+  const btn = h('button', { type: 'button', class: 'link-btn', onclick: () => { btn.remove(); run(); } }, `Why? Check ${username} against these conditions`);
+  return h('div', null, btn, box);
+}
+
+function renderStep(s, username) {
   return h('div', { class: 'step ' + s.status },
     h('div', { class: 'step-head' }, h('span', { class: 'mark' }, statusMark[s.status] || '?'), h('b', null, s.title)),
     h('div', { class: 'step-msg' }, s.message),
     ...nodes(
-      s.filter ? h('div', { class: 'step-detail' }, h('span', { class: 'muted' }, 'Filter sent: '), h('code', null, s.filter), copyButton(s.filter)) : null,
-      s.base ? h('div', { class: 'step-detail muted' }, 'Base: ', h('span', { class: 'mono' }, s.base)) : null,
+      s.filter ? h('div', { class: 'step-detail' }, h('span', { class: 'muted' }, term('filter', 'Conditions sent'), ': '), h('code', null, s.filter), copyButton(s.filter)) : null,
+      s.base ? h('div', { class: 'step-detail muted' }, term('base'), ': ', h('span', { class: 'mono' }, s.base)) : null,
       s.items?.length ? h('ul', { class: 'step-items' }, s.items.map((o) =>
         h('li', null, kindBadge(o.kind), entryLink(o.dn, o.name), o.disabled ? h('span', { class: 'tag' }, 'disabled') : null))) : null,
-      s.truncated ? h('div', { class: 'notice' }, 'Only the first results are shown.') : null));
+      s.truncated ? h('div', { class: 'notice' }, 'Only the first results are shown.') : null,
+      whyBox(s, username)));
 }
 
 // renderLoginTest replays an application's LDAP login for one user.
-export function renderLoginTest(el, info) {
-  let app = 'generic';
+export function renderLoginTest(el, info, params) {
+  let app = Object.hasOwn(apps, params?.get('app') || '') ? params.get('app') : 'generic';
   const appSelect = h('select', { 'aria-label': 'Application' },
-    Object.entries(apps).map(([k, a]) => h('option', { value: k }, a.label)));
+    Object.entries(apps).map(([k, a]) => h('option', { value: k, selected: k === app }, a.label)));
   const fieldsBox = h('div');
   const username = h('input', { name: 'test-username', placeholder: 'login name, e.g. jdoe', required: true, autocomplete: 'off' });
   const password = h('input', { name: 'test-password', type: 'password', autocomplete: 'new-password', placeholder: 'optional' });
@@ -90,7 +118,7 @@ export function renderLoginTest(el, info) {
     fieldsBox.replaceChildren(...apps[app].fields.map(([key, label, hint, adDefault, otherDefault]) => {
       const fallback = (info.isAD ? adDefault : otherDefault) || '';
       inputs[key] = h('input', { name: key, class: 'mono', value: saved[key] ?? fallback, autocomplete: 'off' });
-      return h('label', { class: 'field' }, h('span', null, label), inputs[key], hint ? h('span', { class: 'muted hint' }, hint) : null);
+      return h('label', { class: 'field' }, h('span', null, Array.isArray(label) ? plainTerm(...label) : term(label)), inputs[key], hint ? h('span', { class: 'muted hint' }, hint) : null);
     }));
   };
   appSelect.addEventListener('change', () => { app = appSelect.value; drawFields(); claim(out); out.replaceChildren(placeholder()); });
@@ -104,12 +132,13 @@ export function renderLoginTest(el, info) {
     const label = apps[app].label;
     out.replaceChildren(loading('Testing…'));
     try {
-      const res = await api.checkLogin({ app, username: username.value.trim(), password: password.value, ...values });
+      const tested = username.value.trim();
+      const res = await api.checkLogin({ app, username: tested, password: password.value, ...values });
       if (!current()) return;
       const sum = loginSummary(res.steps, label);
       out.replaceChildren(
         h('div', { class: 'summary ' + sum.status }, h('span', { class: 'mark' }, statusMark[sum.status]), sum.text),
-        h('div', { class: 'steps' }, res.steps.map(renderStep)));
+        h('div', { class: 'steps' }, res.steps.map((s) => renderStep(s, tested))));
     } catch (err) {
       if (current()) out.replaceChildren(errorBox(err));
     }
@@ -117,7 +146,8 @@ export function renderLoginTest(el, info) {
 
   const form = h('form', { class: 'logintest', onsubmit: submit },
     h('h1', null, 'Login test'),
-    h('p', { class: 'muted' }, 'Replays an application\'s LDAP login for one user, so you can see which setting is wrong before you save it there.'),
+    h('p', { class: 'muted' }, 'Replays an application\'s LDAP login for one user, so you can see which setting is wrong before you save it there. ',
+      'Need the filters first? Use the ', h('a', { href: '#/filters' }, 'filter builder'), '.'),
     h('label', { class: 'field' }, h('span', null, 'Application'), appSelect),
     fieldsBox,
     h('div', { class: 'test-user' },
