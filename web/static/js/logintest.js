@@ -62,11 +62,6 @@ function save(app, values) {
   } catch { /* storage unavailable: the form still works */ }
 }
 
-// prefillLoginTest stores settings for app's form, e.g. from the filter
-// builder; fields it does not mention keep their saved values.
-export function prefillLoginTest(app, values) {
-  save(app, { ...loadSaved(app), ...values });
-}
 
 // Steps whose filter is tested against the user's own entry, so "why
 // (not)?" has an answer: finding the user, and Gitea's admin and
@@ -75,10 +70,10 @@ const explainable = new Set(['user', 'admin', 'restricted']);
 
 // whyBox explains a step's filter for the test user. A user search that
 // found nobody explains itself straight away: that is when people ask.
-function whyBox(s, username) {
+function whyBox(s, username, compact) {
   if (!explainable.has(s.id) || !s.filter || !username || s.status === 'skipped') return null;
   const box = h('div', { class: 'step-why' });
-  const run = () => runExplain(box, { who: username, filter: s.filter, base: s.base });
+  const run = () => runExplain(box, { who: username, filter: s.filter, base: s.base, compact });
   if (s.id === 'user' && s.status === 'fail' && !s.items?.length) {
     run();
     return box;
@@ -87,7 +82,17 @@ function whyBox(s, username) {
   return h('div', null, btn, box);
 }
 
-function renderStep(s, username) {
+// renderStep shows one step of a login test; why: false leaves out the
+// "why (not)?" explanation, for a second rendering of the same step;
+// compact shows only the title and the explanation, for the App login
+// wizard, which keeps the technical detail in its step-by-step list.
+export function renderStep(s, username, { why = true, compact = false } = {}) {
+  if (compact) {
+    const box = whyBox(s, username, true);
+    return h('div', { class: 'step ' + s.status },
+      h('div', { class: 'step-head' }, h('span', { class: 'mark' }, statusMark[s.status] || '?'), h('b', null, s.title)),
+      box ?? h('div', { class: 'step-msg' }, s.message));
+  }
   return h('div', { class: 'step ' + s.status },
     h('div', { class: 'step-head' }, h('span', { class: 'mark' }, statusMark[s.status] || '?'), h('b', null, s.title)),
     h('div', { class: 'step-msg' }, s.message),
@@ -97,7 +102,7 @@ function renderStep(s, username) {
       s.items?.length ? h('ul', { class: 'step-items' }, s.items.map((o) =>
         h('li', null, kindBadge(o.kind), entryLink(o.dn, o.name), o.disabled ? h('span', { class: 'tag' }, 'disabled') : null))) : null,
       s.truncated ? h('div', { class: 'notice' }, 'Only the first results are shown.') : null,
-      whyBox(s, username)));
+      why ? whyBox(s, username) : null));
 }
 
 // renderLoginTest replays an application's LDAP login for one user.
@@ -145,9 +150,10 @@ export function renderLoginTest(el, info, params) {
   };
 
   const form = h('form', { class: 'logintest', onsubmit: submit },
-    h('h1', null, 'Login test'),
-    h('p', { class: 'muted' }, 'Replays an application\'s LDAP login for one user, so you can see which setting is wrong before you save it there. ',
-      'Need the filters first? Use the ', h('a', { href: '#/filters' }, 'filter builder'), '.'),
+    h('a', { href: '#/app', class: 'back-link' }, '\u2190 App login'),
+    h('h1', null, 'Test settings you already have'),
+    h('p', { class: 'muted' }, 'Paste an app\'s current LDAP settings and replay its login for one person, to see which setting is wrong. ',
+      'Setting up a new app? The ', h('a', { href: '#/app' }, 'App login'), ' wizard writes the settings for you.'),
     h('label', { class: 'field' }, h('span', null, 'Application'), appSelect),
     fieldsBox,
     h('div', { class: 'test-user' },

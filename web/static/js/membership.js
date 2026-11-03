@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim, term, membershipTag, membershipLegend } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim, membershipTag, membershipLegend } from './dom.js';
 import { plural } from './format.js';
 
 function tags(m) {
@@ -33,7 +33,10 @@ function stats(items) {
 }
 
 // membershipTable renders a filterable list of memberships with CSV export.
-function membershipTable(res, { title, csvName, showGroupType }) {
+// compact, for the Directory side panel, drops the filter controls, the
+// legend and the Type column, and shows each path under its name.
+function membershipTable(res, { title, csvName, showGroupType, compact = false }) {
+  if (compact) return compactTable(res, { title, csvName });
   const wrap = h('div');
   const filter = h('input', { type: 'search', name: 'filter-list', placeholder: 'Filter…', 'aria-label': 'Filter list' });
   const scope = h('select', { name: 'membership-type', 'aria-label': 'Membership type' },
@@ -63,10 +66,7 @@ function membershipTable(res, { title, csvName, showGroupType }) {
   scope.addEventListener('change', render);
 
   const exportBtn = h('button', {
-    onclick: () => downloadCSV(csvName,
-      ['name', 'kind', 'direct', 'primary', 'disabled', 'groupType', 'via', 'dn'],
-      res.items.map((m) => [m.name, m.kind, m.direct, !!m.primary, !!m.disabled, m.groupType || '',
-        (m.via || []).map(rdnValue).join(' > '), m.dn])),
+    onclick: () => downloadCSV(csvName, exportHeader, exportRows(res)),
   }, 'Export CSV');
 
   wrap.append(...nodes(
@@ -75,31 +75,49 @@ function membershipTable(res, { title, csvName, showGroupType }) {
     res.truncated ? h('div', { class: 'notice' }, 'Result truncated at the safety limit.') : null,
     h('table', { 'aria-label': title },
       h('thead', null, h('tr', null,
-        h('th', null, 'Name'), showGroupType ? h('th', null, term('groupType')) : null, h('th', null, 'Membership'), h('th', null, 'Through'))),
+        h('th', null, 'Name'), showGroupType ? h('th', null, 'Type') : null, h('th', null, 'Membership'), h('th', null, 'Through'))),
       tbody)));
   render();
   return wrap;
 }
 
-export async function renderMemberOf(el, dn) {
+function exportRows(res) {
+  return res.items.map((m) => [m.name, m.kind, m.direct, !!m.primary, !!m.disabled, m.groupType || '',
+    (m.via || []).map(rdnValue).join(' > '), m.dn]);
+}
+const exportHeader = ['name', 'kind', 'direct', 'primary', 'disabled', 'groupType', 'via', 'dn'];
+
+function compactTable(res, { title, csvName }) {
+  return h('div', null, ...nodes(
+    h('div', { class: 'toolbar' }, stats(res.items), h('span', { class: 'spacer' }),
+      h('button', { type: 'button', class: 'link-btn', onclick: () => downloadCSV(csvName, exportHeader, exportRows(res)) }, 'Export')),
+    res.truncated ? h('div', { class: 'notice' }, 'Result truncated at the safety limit.') : null,
+    res.items.length ? h('table', { class: 'compact-members', 'aria-label': title }, h('tbody', null, res.items.map((m) => h('tr', null,
+      h('td', null, h('span', { class: 'namecell' }, kindBadge(m.kind), entryLink(m.dn, m.name)),
+        m.via?.length ? h('div', { class: 'via' }, 'via ', m.via.map(rdnValue).join(' \u203a ')) : null,
+        m.kind === 'unknown' && m.description ? h('div', { class: 'notice' }, m.description) : null),
+      h('td', { class: 'tagcell' }, tags(m)))))) : h('div', { class: 'empty' }, 'None')));
+}
+
+export async function renderMemberOf(el, dn, { compact = false } = {}) {
   const current = claim(el);
   el.replaceChildren(loading('Resolving group memberships…'));
   try {
     const res = await api.userGroups(dn);
     if (!current()) return;
     el.replaceChildren(
-      h('p', { class: 'notice' }, 'Every group this account is in: directly, through sub-groups (the Through column shows the path), and its default group.'),
-      membershipTable(res, { title: 'Member of', csvName: `${res.subject.name}-groups.csv`, showGroupType: true }));
+      ...nodes(compact ? null : h('p', { class: 'notice' }, 'Every group this account is in: directly, through sub-groups (the Through column shows the path), and its default group.'),
+      membershipTable(res, { title: 'Member of', csvName: `${res.subject.name}-groups.csv`, showGroupType: true, compact })));
   } catch (err) {
     if (current()) el.replaceChildren(errorBox(err));
   }
 }
 
-export async function renderMembers(el, dn) {
+export async function renderMembers(el, dn, { compact = false } = {}) {
   const nested = h('input', { type: 'checkbox', id: 'nested', name: 'nested', checked: true });
   const body = h('div');
   const head = h('div', { class: 'toolbar' },
-    h('label', { for: 'nested' }, nested, ' ', term('nested', 'Include people in sub-groups')));
+    h('label', { for: 'nested' }, nested, ' Include people in sub-groups'));
   claim(el); // drop a still-loading Member of response
   el.replaceChildren(head, body);
 
@@ -112,7 +130,7 @@ export async function renderMembers(el, dn) {
       const res = await api.groupMembers(dn, isNested);
       if (!current()) return;
       body.replaceChildren(membershipTable(res, {
-        title: 'Members', csvName: `${res.subject.name}-members${isNested ? '-nested' : ''}.csv`, showGroupType: false,
+        title: 'Members', csvName: `${res.subject.name}-members${isNested ? '-nested' : ''}.csv`, showGroupType: false, compact,
       }));
     } catch (err) {
       if (current()) body.replaceChildren(errorBox(err));

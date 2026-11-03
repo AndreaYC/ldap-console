@@ -12,17 +12,11 @@
   <header class="topbar">
     <div class="brand">LDAP Console</div>
     <nav class="views" aria-label="Views">
-      <a href="#/browse" data-view="browse">Browse</a>
-      <a href="#/groups" data-view="groups">Groups</a>
+      <a href="#/dir" data-view="dir">Directory</a>
       <a href="#/people" data-view="people">People → groups</a>
-      <a href="#/search" data-view="search">Search</a>
-      <a href="#/filters" data-view="filters">Filter builder</a>
-      <a href="#/test" data-view="test">Login test</a>
+      <a href="#/app" data-view="app">App login</a>
     </nav>
-    <div class="find">
-      <input id="find" name="find" type="search" placeholder="Find user, group, computer…" autocomplete="off" aria-label="Quick find">
-      <div id="find-results" class="find-results" hidden></div>
-    </div>
+    <span class="topbar-spacer"></span>
     <details id="conn" class="conn" hidden></details>
   </header>
   <main id="main"></main>

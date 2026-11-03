@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim, term, membershipTag, membershipLegend } from './dom.js';
+import { h, nodes, entryLink, errorBox, loading, downloadCSV, rdnValue, claim } from './dom.js';
 import { parseNames, pivotGroups, cellLabel, listHeader, listRows } from './pivot.js';
 import { plural } from './format.js';
 
@@ -20,96 +20,121 @@ function saveText(text) {
   } catch { /* storage unavailable: the form still works */ }
 }
 
-function cellNode(cell) {
-  if (!cell) return h('span', { class: 'cell-none', 'aria-label': 'not a member' }, '·');
-  return membershipTag(cell, cell.via.map(rdnValue));
+// mark draws one cell: a filled dot when directly in the group, a ring
+// through a sub-group, a square for the AD default group, a faint dot when
+// not in it. The words are in its title and aria-label.
+function mark(cell, person, group) {
+  let cls = 'm-none';
+  let say = `${person} is not in ${group}`;
+  if (cell?.primary) [cls, say] = ['m-primary', `${group} is ${person}’s default group (primary group)`];
+  else if (cell?.direct) [cls, say] = ['m-direct', `${person} is directly in ${group}`];
+  else if (cell) [cls, say] = ['m-nested', `${person} is in ${group} through ${cell.via.map(rdnValue).join(' › ')}`];
+  return h('span', { class: 'mark-cell ' + cls, title: say, role: 'img', 'aria-label': say });
 }
 
-// problems lists names that did not resolve to exactly one account.
-// Picking a candidate swaps that name for its DN in the text and reruns.
-function problems(results, pick) {
-  const bad = results.filter((p) => p.status !== 'found');
-  if (!bad.length) return null;
-  return h('div', { class: 'bulk-problems' }, bad.map((p) => h('div', { class: 'step ' + (p.status === 'notFound' ? 'warn' : 'fail') },
-    h('div', { class: 'step-head' }, h('b', { class: 'mono' }, p.query), h('span', { class: 'muted' },
-      p.status === 'notFound' ? 'no account has this login name, email, name or full path (DN)'
-        : p.status === 'ambiguous' ? `${p.matches.length} accounts match; pick one` + (p.truncated ? ' (list cut short)' : '')
-          : p.error)),
-    p.status === 'ambiguous' ? h('ul', { class: 'step-items' }, p.matches.map((o) => h('li', null,
-      kindBadge(o.kind), entryLink(o.dn, o.name), h('span', { class: 'muted mono' }, o.dn),
-      h('button', { type: 'button', onclick: () => pick(p.query, o.dn) }, 'Use this')))) : null)));
+function legend() {
+  return h('div', { class: 'mark-legend muted' },
+    h('span', null, h('span', { class: 'mark-cell m-direct', 'aria-hidden': 'true' }), 'Directly in the group'),
+    h('span', null, h('span', { class: 'mark-cell m-nested', 'aria-hidden': 'true' }), 'Through a sub-group (hover for the path)'),
+    h('span', null, h('span', { class: 'mark-cell m-primary', 'aria-hidden': 'true' }), 'Default group (AD primary group)'));
 }
 
-function pivotTable(pivot, results) {
+// issues sums up names that did not resolve: not-found ones in one line,
+// ambiguous ones each with their candidates to pick from.
+function issues(results, pick) {
+  const missing = results.filter((p) => p.status === 'notFound').map((p) => p.query);
+  const failed = results.filter((p) => p.status === 'error');
+  const ambiguous = results.filter((p) => p.status === 'ambiguous');
+  const found = results.length - missing.length - failed.length - ambiguous.length;
+  if (!missing.length && !failed.length && !ambiguous.length) return null;
+  return h('div', { class: 'bulk-issues' }, ...nodes(
+    h('div', { class: 'callout warn' }, `${found} of ${plural(results.length, 'name')} matched. `,
+      ...nodes(missing.length ? [h('b', null, missing.join(', ')), missing.length === 1 ? ' wasn’t found. ' : ' weren’t found. '] : null,
+        failed.length ? `${failed.length} couldn’t be read: ${failed.map((p) => `${p.query} (${p.error})`).join('; ')}. ` : null)),
+    ambiguous.map((p) => h('div', { class: 'pick' },
+      h('div', null, h('b', null, p.query), ` matches ${p.matches.length} accounts${p.truncated ? ' or more' : ''}. Which one?`),
+      h('ul', null, p.matches.map((o) => h('li', null,
+        h('button', { type: 'button', onclick: () => pick(p.query, o.dn) }, o.name),
+        h('span', { class: 'muted mono' }, o.dn))))))));
+}
+
+function matrix(pivot, results) {
   const { people, rows } = pivot;
   const selected = new Set();
-  const filter = h('input', { type: 'search', name: 'filter-bulk', placeholder: 'Filter groups…', 'aria-label': 'Filter groups' });
-  const show = h('select', { name: 'bulk-show', 'aria-label': 'Which groups' },
-    h('option', { value: 'all' }, 'All groups'),
-    h('option', { value: 'shared' }, 'Shared by everyone'),
-    h('option', { value: 'direct' }, 'With someone in it directly (direct)'));
-  const count = h('span', { class: 'muted' });
-  const buildBtn = h('button', { type: 'button', disabled: true, onclick: () => {
+  let view = 'all';
+  let nested = true;
+  const find = h('input', { type: 'search', placeholder: 'Filter groups', 'aria-label': 'Filter groups', class: 'small-search' });
+  const tabs = h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Which groups' });
+  const subs = h('input', { type: 'checkbox', checked: true });
+  const useBtn = h('a', { class: 'button soft', hidden: true });
+  const tbody = h('tbody');
+  const has = (cell) => (cell && (nested || cell.direct || cell.primary) ? cell : null);
+
+  const drawTabs = () => tabs.replaceChildren(...[['all', 'All groups'], ['shared', 'Shared by everyone']].map(([id, label]) =>
+    h('button', { type: 'button', role: 'tab', 'aria-selected': String(view === id), class: view === id ? 'on' : '',
+      onclick: () => { view = id; drawTabs(); render(); } }, label)));
+
+  const updateUse = () => {
+    useBtn.hidden = !selected.size;
     const q = new URLSearchParams();
     for (const dn of selected) q.append('group', dn);
-    location.hash = '#/filters?' + q.toString();
-  } }, 'Build filters from selected');
-  const tbody = h('tbody');
-
-  const updateBuild = () => {
-    buildBtn.disabled = !selected.size;
-    buildBtn.textContent = selected.size ? `Build filters from ${plural(selected.size, 'group')}` : 'Build filters from selected';
+    useBtn.href = '#/app?' + q;
+    useBtn.textContent = `Use ${selected.size === 1 ? rdnValue([...selected][0]) : plural(selected.size, 'group')} for an app login →`;
   };
 
   const render = () => {
-    const q = filter.value.trim().toLowerCase();
-    const mode = show.value;
-    const visible = rows.filter((r) => (mode !== 'shared' || r.count === people.length) && (mode !== 'direct' || r.direct > 0) &&
-      (!q || r.group.name.toLowerCase().includes(q) || r.group.dn.toLowerCase().includes(q)));
-    count.textContent = `${visible.length} of ${plural(rows.length, 'group')}`;
-    tbody.replaceChildren(...visible.map((r) => {
-      const box = h('input', { type: 'checkbox', 'aria-label': 'Select ' + r.group.name, checked: selected.has(r.group.dn),
-        onchange: (ev) => { if (ev.target.checked) selected.add(r.group.dn); else selected.delete(r.group.dn); updateBuild(); } });
-      return h('tr', { class: r.count === people.length ? 'shared' : null },
-        h('td', null, box),
-        h('td', { class: 'nowrap' }, h('span', { class: 'namecell' }, kindBadge(r.group.kind), entryLink(r.group.dn, r.group.name))),
-        h('td', { class: 'num', title: `${r.count} of ${people.length} people, ${r.direct} directly` }, `${r.count}/${people.length}`),
-        r.cells.map((c) => h('td', { class: 'cell' }, cellNode(c))));
-    }));
-    if (!visible.length) tbody.append(h('tr', null, h('td', { colspan: people.length + 3, class: 'empty' }, 'No groups match')));
+    const needle = find.value.trim().toLowerCase();
+    const shown = rows.map((r) => ({ ...r, cells: r.cells.map(has) }))
+      .map((r) => ({ ...r, count: r.cells.filter(Boolean).length }))
+      .filter((r) => r.count > 0 && (view === 'all' || r.count === people.length) &&
+        (!needle || r.group.name.toLowerCase().includes(needle)))
+      .sort((a, b) => b.count - a.count || a.group.name.localeCompare(b.group.name, undefined, { sensitivity: 'base' }));
+    tbody.replaceChildren(...shown.map((r) => h('tr', null,
+      h('td', { class: 'pick-cell' }, h('input', { type: 'checkbox', 'aria-label': 'Select ' + r.group.name, checked: selected.has(r.group.dn),
+        onchange: (ev) => { if (ev.target.checked) selected.add(r.group.dn); else selected.delete(r.group.dn); updateUse(); } })),
+      h('td', null, entryLink(r.group.dn, r.group.name), ' ',
+        h('span', { class: r.count === people.length ? 'everyone' : 'muted small' }, r.count === people.length ? 'everyone' : `${r.count} of ${people.length}`)),
+      r.cells.map((c, i) => h('td', { class: 'cell' }, mark(c, people[i].matches[0].name, r.group.name))))));
+    if (!shown.length) tbody.append(h('tr', null, h('td', { colspan: people.length + 2, class: 'empty' }, view === 'shared' ? 'No group has all of them.' : 'No groups match.')));
   };
-  filter.addEventListener('input', render);
-  show.addEventListener('change', render);
+  find.addEventListener('input', render);
+  subs.addEventListener('change', () => { nested = subs.checked; render(); });
 
-  const exportBtn = h('button', { type: 'button', onclick: () => downloadCSV('people-groups.csv',
-    ['group', 'groupType', 'members', 'dn', ...people.map((p) => p.matches[0].name)],
-    rows.map((r) => [r.group.name, r.group.groupType, r.count, r.group.dn, ...r.cells.map(cellLabel)])) }, 'Export matrix');
-  const exportLong = h('button', { type: 'button', onclick: () => downloadCSV('people-groups-list.csv',
-    listHeader, listRows(results)) }, 'Export list');
+  const exportMenu = h('details', { class: 'menu export' }, h('summary', { class: 'button' }, 'Export ▾'),
+    h('div', { class: 'menu-pop right' },
+      h('button', { type: 'button', onclick: () => { exportMenu.open = false; downloadCSV('people-groups.csv',
+        ['group', 'groupType', 'members', 'dn', ...people.map((p) => p.matches[0].name)],
+        rows.map((r) => [r.group.name, r.group.groupType, r.count, r.group.dn, ...r.cells.map(cellLabel)])); } },
+      h('span', null, 'Table (CSV)'), h('span', { class: 'muted' }, 'One row per group, one column per person')),
+      h('button', { type: 'button', onclick: () => { exportMenu.open = false; downloadCSV('people-groups-list.csv', listHeader, listRows(results)); } },
+        h('span', null, 'List (CSV)'), h('span', { class: 'muted' }, 'One row per person and group'))));
+  document.addEventListener('click', (ev) => { if (exportMenu.open && !exportMenu.contains(ev.target)) exportMenu.open = false; });
 
-  const head = h('tr', null, h('th', null, ''), h('th', null, 'Group'), h('th', { class: 'num', title: 'How many of these people are in the group' }, 'People'),
-    people.map((p) => h('th', { class: 'person' }, entryLink(p.matches[0].dn, p.matches[0].name),
-      p.matches[0].disabled ? h('div', null, h('span', { class: 'tag disabled', title: 'Disabled (ACCOUNTDISABLE)' }, 'disabled')) : null,
-      p.truncated ? h('div', { class: 'muted', title: 'a safety limit was hit; this person may be in more groups' }, 'incomplete') : null)));
-
+  drawTabs();
   render();
-  return h('div', null,
-    h('div', { class: 'toolbar' }, filter, show, count, h('span', { class: 'spacer' }), buildBtn, exportBtn, exportLong),
-    membershipLegend(),
-    h('div', { class: 'table-scroll' }, h('table', { class: 'pivot', 'aria-label': 'Groups by person' }, h('thead', null, head), tbody)));
+  return h('div', { class: 'bulk-results' },
+    h('div', { class: 'bulk-bar' }, tabs, h('label', { class: 'check' }, subs, ' Count sub-groups'), find,
+      h('span', { class: 'spacer' }), useBtn, exportMenu),
+    h('div', { class: 'table-scroll' }, h('table', { class: 'pivot', 'aria-label': 'Groups by person' },
+      h('thead', null, h('tr', null, h('th', { class: 'pick-cell' }, h('span', { class: 'sr-only' }, 'Select')), h('th', null, 'Group'),
+        people.map((p) => h('th', { class: 'person' }, entryLink(p.matches[0].dn, p.matches[0].name),
+          p.matches[0].disabled ? h('div', null, h('span', { class: 'status off' }, 'disabled')) : null,
+          p.truncated ? h('div', { class: 'muted small', title: 'A safety limit was hit; this person may be in more groups' }, 'incomplete') : null)))),
+      tbody)),
+    legend());
 }
 
 // renderBulk looks up the groups of many people at once and lines them up
 // side by side, so shared and missing memberships stand out.
 export function renderBulk(el) {
-  const text = h('textarea', { name: 'bulk-names', rows: 8, class: 'mono', spellcheck: 'false', 'aria-label': 'Names',
-    placeholder: 'alice\nbob@corp.local\nCORP\\carol\nCN=Dave,OU=Users,DC=corp,DC=local' });
+  const text = h('textarea', { name: 'bulk-names', rows: 3, class: 'mono', spellcheck: 'false', 'aria-label': 'Names',
+    placeholder: 'alice, bob@corp.local, CORP\\carol\nor one per line' });
   text.value = loadText();
-  const counter = h('span', { class: 'muted' });
+  const counter = h('span', { class: 'muted small' });
   const out = h('section', { 'aria-live': 'polite' });
   const updateCount = () => {
     const n = parseNames(text.value).length;
-    counter.textContent = n > maxNames ? `${n} names; at most ${maxNames} at a time` : plural(n, 'name');
+    counter.textContent = n > maxNames ? `${n} names — at most ${maxNames} at a time` : n ? plural(n, 'name') : '';
     counter.classList.toggle('error-text', n > maxNames);
   };
   text.addEventListener('input', updateCount);
@@ -124,19 +149,7 @@ export function renderBulk(el) {
       const res = await api.bulkGroups(names);
       if (!current()) return;
       const pivot = pivotGroups(res.people);
-      const by = (s) => res.people.filter((p) => p.status === s).length;
-      const missing = res.people.length - by('found');
-      out.replaceChildren(...nodes(
-        h('div', { class: 'stats' },
-          h('span', null, h('b', null, by('found')), ' found'),
-          pivot.people.length < by('found') ? h('span', null, h('b', null, pivot.people.length), ' distinct accounts') : null,
-          missing ? h('span', null, h('b', null, by('notFound')), ' not found') : null,
-          by('ambiguous') ? h('span', null, h('b', null, by('ambiguous')), ' ambiguous') : null,
-          by('error') ? h('span', null, h('b', null, by('error')), ' failed') : null,
-          h('span', null, h('b', null, pivot.rows.length), ' groups'),
-          h('span', null, h('b', null, pivot.rows.filter((r) => r.count === pivot.people.length).length), ' shared by everyone')),
-        problems(res.people, pick),
-        pivot.people.length ? pivotTable(pivot, res.people) : null));
+      out.replaceChildren(...nodes(issues(res.people, pick), pivot.people.length ? matrix(pivot, res.people) : null));
     } catch (err) {
       if (current()) out.replaceChildren(errorBox(err));
     }
@@ -150,15 +163,12 @@ export function renderBulk(el) {
     run();
   };
 
-  const form = h('form', { class: 'bulk-form', onsubmit: (ev) => { ev.preventDefault(); run(); } },
-    h('h1', null, 'People → groups'),
-    h('p', { class: 'muted' }, 'Paste names to see every group each person is in, side by side: directly, through sub-groups, and their default group.'),
-    h('p', { class: 'muted hint' }, 'A name can be a login name (', h('code', null, 'sAMAccountName'), ' / ', h('code', null, 'uid'), '), ',
-      h('code', null, 'DOMAIN\\login'), ', an email or sign-in address (', h('code', null, 'mail'), ' / ', h('code', null, 'userPrincipalName'), '), ',
-      'an exact name (', h('code', null, 'cn'), ' / ', h('code', null, 'displayName'), '), or a full path (', h('code', null, 'DN'), ').'),
-    text,
-    h('div', { class: 'toolbar' }, h('span', { class: 'muted hint' }, 'One per line, or separated by commas or semicolons.'),
-      counter, h('span', { class: 'spacer' }), h('button', { type: 'submit', class: 'primary' }, 'Look up groups')));
-  el.replaceChildren(h('div', { class: 'page' }, form, out));
+  text.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); run(); } });
+  el.replaceChildren(h('div', { class: 'page narrow' },
+    h('div', { class: 'page-head' }, h('h1', null, 'Which groups are these people in?'),
+      h('p', { class: 'muted' }, 'Paste login names, emails or names — separated by commas or one per line.')),
+    h('form', { class: 'bulk-input', onsubmit: (ev) => { ev.preventDefault(); run(); } },
+      text, h('div', { class: 'bulk-go' }, h('button', { type: 'submit', class: 'primary' }, 'Look up'), counter)),
+    out));
   updateCount();
 }

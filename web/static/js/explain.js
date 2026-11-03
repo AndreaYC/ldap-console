@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, nodes, kindBadge, entryLink, errorBox, loading, rdnValue, claim, term } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, rdnValue, claim } from './dom.js';
 import { blockers, valuesFor } from './explaintree.js';
 
 const maxValues = 8;
@@ -34,7 +34,8 @@ function treeNode(node, values, name) {
 
 // renderExplanation shows whether the account matches and, if not, the
 // parts that stop it, above the full tree of the filter.
-function renderExplanation(res, recheck) {
+// compact folds the full condition tree, for places that lead with the answer.
+function renderExplanation(res, recheck, compact) {
   if (res.status === 'notFound') {
     return h('div', { class: 'summary warn' }, h('span', { class: 'mark' }, '!'),
       `No account has the login name, email, name or full path (DN) ${res.query}`);
@@ -53,40 +54,28 @@ function renderExplanation(res, recheck) {
     : h('div', { class: 'summary fail' }, h('span', { class: 'mark' }, '✗'), `${name} does not match`);
   return h('div', { class: 'explain' }, ...nodes(
     head,
-    h('div', { class: 'muted explain-who' }, kindBadge(who.kind, who.dn), ' ', entryLink(who.dn, who.dn),
+    compact ? null : h('div', { class: 'muted explain-who' }, kindBadge(who.kind, who.dn), ' ', entryLink(who.dn, who.dn),
       who.disabled ? h('span', { class: 'tag disabled', title: 'Disabled (ACCOUNTDISABLE)' }, 'disabled') : null),
     res.match ? null : h('div', { class: 'explain-reasons' }, h('b', null, 'Why: '),
       h('ul', null, ...nodes(
-        res.inBase ? null : h('li', null, `${name} is outside `, term('base', 'where to look'), ': ', h('span', { class: 'mono' }, res.base)),
+        res.inBase ? null : h('li', null, `${name} is outside where the search looks: `, h('span', { class: 'mono' }, res.base)),
         reasons.map((r) => h('li', null, r.say, r.hint ? h('div', { class: 'explain-hint' }, '\u2192 ', r.hint) : null))))),
-    h('details', { class: 'explain-tree', open: !res.match },
+    h('details', { class: 'explain-tree', open: !res.match && !compact },
       h('summary', null, 'Every condition, checked for ', name),
       h('ul', null, treeNode(res.root, res.values, name)),
       h('div', { class: 'muted hint' }, 'Conditions checked (', h('code', null, 'LDAP filter'), '): ', h('code', null, res.filter)))));
 }
 
 // runExplain checks who against filter and renders the answer into el.
-export async function runExplain(el, { who, filter, base }) {
+export async function runExplain(el, { who, filter, base, compact = false }) {
   const current = claim(el);
   if (!who) return el.replaceChildren(errorBox(new Error('Enter a login name, email or name.')));
   if (!filter) return el.replaceChildren(errorBox(new Error('There are no conditions to check yet.')));
   el.replaceChildren(loading(`Checking ${who}…`));
   try {
     const res = await api.explain({ who, filter, base });
-    if (current()) el.replaceChildren(renderExplanation(res, (dn) => runExplain(el, { who: dn, filter, base })));
+    if (current()) el.replaceChildren(renderExplanation(res, (dn) => runExplain(el, { who: dn, filter, base, compact }), compact));
   } catch (err) {
     if (current()) el.replaceChildren(errorBox(err));
   }
-}
-
-// explainPanel asks for a person and checks them against the filter that
-// get() returns at that moment: { filter, base }.
-export function explainPanel(get, { label = 'Check a person', placeholder = 'login name, email or name' } = {}) {
-  const who = h('input', { name: 'explain-who', placeholder, autocomplete: 'off', 'aria-label': 'Person to check' });
-  const out = h('div', { 'aria-live': 'polite' });
-  const go = (ev) => { ev?.preventDefault(); runExplain(out, { who: who.value.trim(), ...get() }); };
-  who.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go(ev); });
-  return h('div', { class: 'explain-panel' },
-    h('div', { class: 'toolbar' }, h('b', null, label), who, h('button', { type: 'button', onclick: go }, 'Why (not)?')),
-    out);
 }

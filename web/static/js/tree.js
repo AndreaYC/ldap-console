@@ -1,15 +1,23 @@
 import { api } from './api.js';
 import { h, kindBadge, rdnValue, splitDN } from './dom.js';
 
+// domainName shows DC=corp,DC=local as corp.local; other roots stay as given.
+function domainName(dn) {
+  const parts = dn.split(',').map((p) => p.trim());
+  return parts.every((p) => /^dc=/i.test(p)) ? parts.map((p) => p.slice(3)).join('.') : dn;
+}
+
 // Tree is a lazily expanded view of the DIT. Nodes are keyed by lowercased DN.
+// onSelect gets the DN and the entry's summary; foldersOnly hides leaves.
 export class Tree {
-  constructor(roots, onSelect) {
+  constructor(roots, onSelect, { foldersOnly = false } = {}) {
     this.onSelect = onSelect;
+    this.foldersOnly = foldersOnly;
     this.nodes = new Map();
     this.selected = null;
     this.el = h('div', { class: 'tree' });
     const ul = h('ul');
-    for (const dn of roots) ul.append(this.#node({ dn, name: dn, kind: 'container' }));
+    for (const dn of roots) ul.append(this.#node({ dn, name: domainName(dn), kind: 'container' }));
     this.el.append(ul);
   }
 
@@ -23,7 +31,7 @@ export class Tree {
     this.nodes.set(obj.dn.toLowerCase(), state);
 
     caret.addEventListener('click', (ev) => { ev.stopPropagation(); this.toggle(state); });
-    row.addEventListener('click', () => this.onSelect(obj.dn));
+    row.addEventListener('click', () => this.onSelect(obj.dn, obj));
     row.addEventListener('dblclick', () => this.toggle(state));
     return li;
   }
@@ -53,11 +61,12 @@ export class Tree {
     try {
       const res = await api.children(state.obj.dn);
       const ul = h('ul');
-      for (const child of res.items) ul.append(this.#node(child));
+      const items = this.foldersOnly ? res.items.filter((c) => c.kind === 'container') : res.items;
+      for (const child of items) ul.append(this.#node(child));
       if (res.truncated) ul.append(h('li', { class: 'notice' }, 'Showing first entries only — use Search for the rest'));
       state.children = ul;
       state.li.append(ul);
-      state.caret.textContent = res.items.length ? '▼' : '';
+      state.caret.textContent = items.length ? '▼' : '';
     } catch (err) {
       state.open = false;
       state.caret.textContent = '!';

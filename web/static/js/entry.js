@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue, claim } from './dom.js';
+import { h, nodes, kindBadge, entryLink, errorBox, loading, copyButton, rdnValue, claim } from './dom.js';
 import { renderMemberOf, renderMembers } from './membership.js';
 
 function valueNode(v) {
@@ -33,7 +33,9 @@ const membershipKinds = new Set(['user', 'computer', 'group', 'foreignSecurityPr
 // renderEntry shows one entry with Attributes / Member of / Members tabs.
 // A response for an entry the user has already navigated away from is
 // dropped, so it cannot replace the newer entry or rewrite the URL.
-export async function renderEntry(el, dn, tab) {
+// onTab, when given, is told the tab shown instead of the URL being rewritten;
+// compact suits a side panel; after is shown under the entry's name.
+export async function renderEntry(el, dn, tab, { onTab, compact = false, after = null } = {}) {
   const current = claim(el);
   el.replaceChildren(loading());
   let entry;
@@ -56,13 +58,18 @@ export async function renderEntry(el, dn, tab) {
   const bar = h('div', { class: 'tabs', role: 'tablist' });
   const show = (id) => {
     for (const b of bar.children) b.classList.toggle('active', b.dataset.tab === id);
-    history.replaceState(null, '', `#/browse?dn=${encodeURIComponent(dn)}&tab=${id}`);
+    // Only while Browse is still showing this entry: a late answer must
+    // not rewrite the URL of a page the user has moved on to.
+    if (onTab) onTab(id);
+    else if (location.hash.startsWith('#/browse') || location.hash === '' || location.hash === '#/') {
+      history.replaceState(null, '', `#/browse?dn=${encodeURIComponent(dn)}&tab=${id}`);
+    }
     if (id === 'attributes') {
       claim(body); // drop a still-loading Member of / Members response
       body.replaceChildren(attributesTable(entry));
     }
-    if (id === 'memberof') renderMemberOf(body, dn);
-    if (id === 'members') renderMembers(body, dn);
+    if (id === 'memberof') renderMemberOf(body, dn, { compact });
+    if (id === 'members') renderMembers(body, dn, { compact });
   };
   for (const [id, label] of tabs) {
     const b = h('button', { role: 'tab', onclick: () => show(id) }, label);
@@ -73,6 +80,6 @@ export async function renderEntry(el, dn, tab) {
   el.replaceChildren(
     h('div', { class: 'head' }, kindBadge(entry.kind, entry.dn), h('h1', null, name)),
     h('div', { class: 'dnline' }, h('span', { class: 'mono' }, entry.dn), copyButton(entry.dn)),
-    bar, body);
+    ...nodes(after), bar, body);
   show(tab);
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loginSummary, containerPath, hostOf, plural, rdnValue, splitDN, unescapeValue } from '../static/js/format.js';
+import { loginSummary, containerPath, ouPath, hostOf, plural, rdnValue, splitDN, unescapeValue } from '../static/js/format.js';
 
 const step = (id, status, title = id) => ({ id, status, title });
 
@@ -88,4 +88,9 @@ test('malformed escapes do not throw', () => {
 test('splitDN keeps escaped commas inside an RDN', () => {
   assert.deepEqual(splitDN('cn=Smith\\, John, ou=people,dc=example'), ['cn=Smith\\, John', 'ou=people', 'dc=example']);
   assert.deepEqual(splitDN('cn=Smith\\2C John,dc=example'), ['cn=Smith\\2C John', 'dc=example']);
+});
+
+test('ouPath names an OU top-down without the domain', () => {
+  assert.equal(ouPath('OU=Teams,OU=Staff,DC=corp,DC=local'), 'Staff \u203a Teams');
+  assert.equal(ouPath('CN=Users,DC=corp,DC=local'), 'Users');
 });

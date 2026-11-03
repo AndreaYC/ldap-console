@@ -59,6 +59,12 @@ export function containerPath(dn) {
   return splitDN(dn).slice(1).filter((r) => !/^dc=/i.test(r)).map(valueOfRDN).reverse().join(' / ');
 }
 
+// ouPath names an OU or container top-down, without the domain:
+// "OU=Teams,OU=Staff,DC=corp,DC=local" -> "Staff › Teams".
+export function ouPath(dn) {
+  return splitDN(dn).filter((r) => !/^dc=/i.test(r)).map(valueOfRDN).reverse().join(' \u203a ');
+}
+
 // hostOf returns the host of an ldap:// or ldaps:// URL.
 export function hostOf(url) {
   const m = /^ldaps?:\/\/(\[[^\]]+\]|[^/:]+)/i.exec(url || '');
