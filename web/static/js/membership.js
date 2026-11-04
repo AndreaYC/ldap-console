@@ -1,6 +1,9 @@
 import { api } from './api.js';
 import { h, nodes, kindBadge, entryLink, errorBox, loading, downloadCSV, rdnValue, claim, membershipTag, membershipLegend } from './dom.js';
 import { plural } from './format.js';
+import { gcMemberOfWarning, gcMembersWarning } from './catalog.js';
+
+const gcLine = (text) => (text ? h('div', { class: 'callout warn' }, text) : null);
 
 function tags(m) {
   return [
@@ -99,7 +102,7 @@ function compactTable(res, { title, csvName }) {
       h('td', { class: 'tagcell' }, tags(m)))))) : h('div', { class: 'empty' }, 'None')));
 }
 
-export async function renderMemberOf(el, dn, { compact = false } = {}) {
+export async function renderMemberOf(el, dn, { compact = false, info = null } = {}) {
   const current = claim(el);
   el.replaceChildren(loading('Resolving group memberships…'));
   try {
@@ -107,19 +110,20 @@ export async function renderMemberOf(el, dn, { compact = false } = {}) {
     if (!current()) return;
     el.replaceChildren(
       ...nodes(compact ? null : h('p', { class: 'notice' }, 'Every group this account is in: directly, through sub-groups (the Through column shows the path), and its default group.'),
+      gcLine(gcMemberOfWarning(info, dn)),
       membershipTable(res, { title: 'Member of', csvName: `${res.subject.name}-groups.csv`, showGroupType: true, compact })));
   } catch (err) {
     if (current()) el.replaceChildren(errorBox(err));
   }
 }
 
-export async function renderMembers(el, dn, { compact = false } = {}) {
+export async function renderMembers(el, dn, { compact = false, info = null } = {}) {
   const nested = h('input', { type: 'checkbox', id: 'nested', name: 'nested', checked: true });
   const body = h('div');
   const head = h('div', { class: 'toolbar' },
     h('label', { for: 'nested' }, nested, ' Include people in sub-groups'));
   claim(el); // drop a still-loading Member of response
-  el.replaceChildren(head, body);
+  el.replaceChildren(...nodes(gcLine(gcMembersWarning(info, dn)), head, body));
 
   // Toggling nested while a load runs must not let the older answer win.
   const load = async () => {

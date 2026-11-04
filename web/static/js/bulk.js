@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { h, nodes, entryLink, errorBox, loading, downloadCSV, rdnValue, claim } from './dom.js';
 import { parseNames, pivotGroups, cellLabel, listHeader, listRows } from './pivot.js';
 import { plural } from './format.js';
+import { gcPeopleWarning } from './catalog.js';
 
 const storageKey = 'ldap-console.bulk.names';
 const maxNames = 200; // directory.MaxBulkNames
@@ -125,8 +126,9 @@ function matrix(pivot, results) {
 }
 
 // renderBulk looks up the groups of many people at once and lines them up
-// side by side, so shared and missing memberships stand out.
-export function renderBulk(el) {
+// side by side, so shared and missing memberships stand out. info (from
+// /api/info) lets it warn about Global Catalog gaps.
+export function renderBulk(el, info) {
   const text = h('textarea', { name: 'bulk-names', rows: 3, class: 'mono', spellcheck: 'false', 'aria-label': 'Names',
     placeholder: 'alice, bob@corp.local, CORP\\carol\nor one per line' });
   text.value = loadText();
@@ -149,7 +151,9 @@ export function renderBulk(el) {
       const res = await api.bulkGroups(names);
       if (!current()) return;
       const pivot = pivotGroups(res.people);
-      out.replaceChildren(...nodes(issues(res.people, pick), pivot.people.length ? matrix(pivot, res.people) : null));
+      const gcWarn = gcPeopleWarning(info, pivot.people.map((p) => p.matches[0]));
+      out.replaceChildren(...nodes(issues(res.people, pick), gcWarn ? h('div', { class: 'callout warn' }, gcWarn) : null,
+        pivot.people.length ? matrix(pivot, res.people) : null));
     } catch (err) {
       if (current()) out.replaceChildren(errorBox(err));
     }

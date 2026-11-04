@@ -1,6 +1,7 @@
 // What the App login wizard produces for each application. Pure: no DOM
 // access, so it runs under node --test.
 import { buildSettings, defaultOptions } from './filters.js';
+import { parseLdapUrl, isGlobalCatalog } from './catalog.js';
 
 export const appInfo = {
   gitea: {
@@ -100,16 +101,14 @@ export function settingsFor(state) {
 // It returns null when the connection is already a Global Catalog, isn't
 // AD, or its URL can't be read.
 export function forestHint(info) {
-  if (!info || !info.isAD) return null;
-  const m = /^(ldaps?):\/\/([^/:?#]+)(?::(\d+))?/i.exec(info.url || '');
-  if (!m) return null;
-  const secure = m[1].toLowerCase() === 'ldaps';
-  const port = m[3] ? Number(m[3]) : secure ? 636 : 389;
-  if (port === 3268 || port === 3269) return null;
-  const gc = secure ? `ldaps://${m[2]}:3269` : `ldap://${m[2]}:3268`;
+  if (!info || !info.isAD || isGlobalCatalog(info)) return null;
+  const u = parseLdapUrl(info.url);
+  if (!u) return null;
+  const { secure, host, port } = u;
+  const gc = secure ? `ldaps://${host}:3269` : `ldap://${host}:3268`;
   return {
     gc,
-    text: `People in other domains of this forest (for example a child domain) can't log in through port ${port}: it only searches ${m[2]}'s own domain. ` +
+    text: `People in other domains of this forest (for example a child domain) can't log in through port ${port}: it only searches ${host}'s own domain. ` +
       `If they need to, point the app's server at the Global Catalog, ${gc}, with the same search base and bind account.`,
   };
 }

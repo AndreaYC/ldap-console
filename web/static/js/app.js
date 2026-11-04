@@ -28,7 +28,7 @@ async function route() {
 
   if (view === 'connect' || !info.connected) return renderConnect(main, info);
   if (view === 'test') return renderLoginTest(main, info, params);
-  if (view === 'people') return renderBulk(main);
+  if (view === 'people') return renderBulk(main, info);
   if (view === 'filters') { // the filter builder became the App login wizard
     history.replaceState(null, '', '#/app' + (params.toString() ? '?' + params : ''));
     return route();

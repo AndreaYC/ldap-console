@@ -34,8 +34,9 @@ const membershipKinds = new Set(['user', 'computer', 'group', 'foreignSecurityPr
 // A response for an entry the user has already navigated away from is
 // dropped, so it cannot replace the newer entry or rewrite the URL.
 // onTab, when given, is told the tab shown instead of the URL being rewritten;
-// compact suits a side panel; after is shown under the entry's name.
-export async function renderEntry(el, dn, tab, { onTab, compact = false, after = null } = {}) {
+// compact suits a side panel; after is shown under the entry's name; info
+// (from /api/info) lets the membership tabs warn about Global Catalog gaps.
+export async function renderEntry(el, dn, tab, { onTab, compact = false, after = null, info = null } = {}) {
   const current = claim(el);
   el.replaceChildren(loading());
   let entry;
@@ -68,8 +69,8 @@ export async function renderEntry(el, dn, tab, { onTab, compact = false, after =
       claim(body); // drop a still-loading Member of / Members response
       body.replaceChildren(attributesTable(entry));
     }
-    if (id === 'memberof') renderMemberOf(body, dn, { compact });
-    if (id === 'members') renderMembers(body, dn, { compact });
+    if (id === 'memberof') renderMemberOf(body, dn, { compact, info });
+    if (id === 'members') renderMembers(body, dn, { compact, info });
   };
   for (const [id, label] of tabs) {
     const b = h('button', { role: 'tab', onclick: () => show(id) }, label);

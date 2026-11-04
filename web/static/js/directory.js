@@ -6,6 +6,7 @@ import { runExplain } from './explain.js';
 import { allGroups } from './grouppicker.js';
 import { toFilter, fromFilter, chipWords, kinds, types, presets, fieldOpLabels } from './conditions.js';
 import { containerPath, ouPath, plural } from './format.js';
+import { isGlobalCatalog, presetBlind, gcBlindKind, gcNote, gcSearchWarning, gcGroupsWarning } from './catalog.js';
 
 const limit = 1000;
 const kindWords = { container: 'Folder', user: 'Person', group: 'Group', computer: 'Computer', contact: 'Contact', foreignSecurityPrincipal: 'Other domain', other: 'Other', unknown: 'Unknown' };
@@ -67,6 +68,7 @@ export function createDirectory(info) {
   const roots = info.namingContexts?.length ? info.namingContexts : [info.baseDN];
   const st = { search: { type: '', q: '', match: 'all', conds: [] }, base: info.baseDN, sel: '', tab: '', selKind: '', cols: '', ldapOpen: false, filterError: '' };
   let shown = []; // DNs in the current results, lower-cased
+  const gc = isGlobalCatalog(info);
 
   const writeUrl = () => {
     const p = new URLSearchParams();
@@ -85,13 +87,19 @@ export function createDirectory(info) {
     st.sel = '';
     changed();
   }, { foldersOnly: true });
-  const views = h('ul', { class: 'views-list' }, presets.filter((p) => info.isAD || !p.ad).map((p) =>
-    h('li', null, h('button', { type: 'button', onclick: () => {
+  const views = h('ul', { class: 'views-list' }, presets.filter((p) => info.isAD || !p.ad).map((p) => {
+    // The Global Catalog never returns what some views test: offer them
+    // greyed out with the reason, rather than let them show 0.
+    if (gc && presetBlind(p)) {
+      return h('li', null, h('button', { type: 'button', disabled: true, title: gcNote(info) }, p.label, h('span', { class: 'view-note' }, gcNote(info))));
+    }
+    return h('li', null, h('button', { type: 'button', onclick: () => {
       st.search = { type: '', q: '', match: 'all', conds: [], ...structuredClone(p.search) };
       st.sel = '';
       syncControls();
       changed();
-    } }, p.label))));
+    } }, p.label));
+  }));
   const sidebar = h('aside', { class: 'dir-side', 'aria-label': 'Views and folders' },
     h('div', { class: 'side-title' }, 'Views'), views,
     h('div', { class: 'side-title' }, 'Folders'), tree.el);
@@ -170,12 +178,14 @@ export function createDirectory(info) {
   };
 
   const addMenu = h('details', { class: 'menu' }, h('summary', { class: 'add-filter' }, '+ Add filter'),
-    h('div', { class: 'menu-pop', role: 'menu' }, Object.entries(kinds).filter(([k, d]) => d.menu && (info.isAD || !d.ad)).map(([k, d]) =>
-      h('button', { type: 'button', role: 'menuitem', onclick: () => {
+    h('div', { class: 'menu-pop', role: 'menu' }, Object.entries(kinds).filter(([k, d]) => d.menu && (info.isAD || !d.ad)).map(([k, d]) => {
+      const blind = gc && gcBlindKind(k);
+      return h('button', { type: 'button', role: 'menuitem', disabled: blind, onclick: () => {
         addMenu.open = false;
         if (k === 'group' || k === 'idle' || k === 'field') openEditor(k);
         else addCond(k === 'disabled' ? { k, not: false } : { k });
-      } }, h('span', null, d.menu), h('span', { class: 'muted' }, d.hint)))));
+      } }, h('span', null, d.menu), h('span', { class: blind ? 'warn-text' : 'muted' }, blind ? gcNote(info) : d.hint));
+    })));
   document.addEventListener('click', (ev) => { if (addMenu.open && !addMenu.contains(ev.target)) addMenu.open = false; });
 
   const matchSel = h('select', { 'aria-label': 'Combine filters', onchange: (ev) => { st.search.match = ev.target.value; changed(); } },
@@ -204,6 +214,7 @@ export function createDirectory(info) {
   const count = h('div', { class: 'dir-count', 'aria-live': 'polite' });
   const exportMenu = h('details', { class: 'menu export' }, h('summary', { class: 'button' }, 'Export ▾'), h('div', { class: 'menu-pop right' }));
   const results = h('div', { class: 'dir-results' });
+  const gcWarn = h('div', { class: 'dir-gc', 'aria-live': 'polite' });
 
   const listing = () => !st.search.type && !st.search.q.trim() && !st.search.conds.length;
 
@@ -211,6 +222,7 @@ export function createDirectory(info) {
     const current = claim(results);
     results.replaceChildren(loading(listing() ? 'Loading folder…' : 'Searching…'));
     count.replaceChildren();
+    gcWarn.replaceChildren();
     try {
       let rows, cols, truncated;
       if (listing()) {
@@ -228,11 +240,18 @@ export function createDirectory(info) {
       }
       if (!current()) return;
       shown = rows.map((r) => r.dn.toLowerCase());
+      drawGcWarnings(rows);
       drawResults(rows, cols, truncated);
       drawPanel();
     } catch (err) {
       if (current()) results.replaceChildren(errorBox(err));
     }
+  };
+
+  // drawGcWarnings says when a Global Catalog result can't be trusted.
+  const drawGcWarnings = (rows) => {
+    const lines = [gcSearchWarning(info, st.search), gcGroupsWarning(info, rows)].filter(Boolean);
+    gcWarn.replaceChildren(...lines.map((t) => h('div', { class: 'callout warn' }, t)));
   };
 
   const drawResults = (rows, cols, truncated) => {
@@ -289,7 +308,7 @@ export function createDirectory(info) {
     }
     if (panelFor === st.sel) return;
     panelFor = st.sel;
-    renderEntry(panelBody, st.sel, st.tab, { onTab: (id) => { st.tab = id; writeUrl(); }, compact: true, after: whyBox });
+    renderEntry(panelBody, st.sel, st.tab, { onTab: (id) => { st.tab = id; writeUrl(); }, compact: true, after: whyBox, info });
   };
 
   const changed = () => { writeUrl(); run(); };
@@ -301,7 +320,7 @@ export function createDirectory(info) {
       h('div', { class: 'dir-bar' }, typeTabs, h('span', { class: 'spacer' }), ldapToggle),
       chips, editor, ldapBox,
       h('div', { class: 'dir-status' }, count, h('span', { class: 'spacer' }), exportMenu),
-      results),
+      gcWarn, results),
     panel);
   document.addEventListener('click', (ev) => { if (exportMenu.open && !exportMenu.contains(ev.target)) exportMenu.open = false; });
 
